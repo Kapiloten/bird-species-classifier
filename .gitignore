@@ -12,3 +12,6 @@ train_soundscapes/
 *.wav
 *.mp3
 
+# Local plotting cache
+.matplotlib/
+results/matplotlib_cache*/

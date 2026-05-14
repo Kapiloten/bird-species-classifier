@@ -1,0 +1,2 @@
+model,test_accuracy,test_f1_macro
+svm_rbf,0.7483221476510067,0.7500740592378207
