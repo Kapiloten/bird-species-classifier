@@ -1,0 +1,2 @@
+model,test_accuracy,test_f1_macro
+logistic_regression,0.7248322147651006,0.7253464984278576

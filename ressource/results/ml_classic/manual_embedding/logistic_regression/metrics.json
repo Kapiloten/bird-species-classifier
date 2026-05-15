@@ -1,0 +1,15 @@
+{
+  "model": "logistic_regression",
+  "feature_files": [
+    "features\\features.csv",
+    "features\\mfcc_features.csv"
+  ],
+  "n_train": 1938,
+  "n_val": 448,
+  "n_test": 596,
+  "n_features": 51,
+  "val_accuracy": 0.7209821428571429,
+  "val_f1_macro": 0.7214873778954466,
+  "test_accuracy": 0.7248322147651006,
+  "test_f1_macro": 0.7253464984278576
+}
