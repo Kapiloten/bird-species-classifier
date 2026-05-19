@@ -13,7 +13,6 @@ if gpus:
     try:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-        print("test gpu passé")
     except RuntimeError as e:
         print(e)
 
@@ -43,49 +42,56 @@ class BirdDataset(Dataset):
 MODEL_URL = "https://www.kaggle.com/models/google/bird-vocalization-classifier/TensorFlow2/bird-vocalization-classifier/8"
 model = hub.load(MODEL_URL)
 
-audio_repertory = 'ressource/raw_data/train_audio'
+audio_repertories = ["train_audio"]
 
-dataset = BirdDataset(root_dir=audio_repertory)
-dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+for repertory_name in audio_repertories:
+    audio_repertory = "ressource/raw_data/" + repertory_name
+    dataset = BirdDataset(root_dir=audio_repertory)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
-embeddings = []
-labels = []
+    embeddings = []
+    labels = []
+    row_ids = []
 
 
-for batch_waveforms, batch_labels, batch_paths in tqdm(dataloader, desc="Extraction", unit="fichier"):
-    try:
-        audio_plat = batch_waveforms[0].numpy()
-        tf_audio = tf.convert_to_tensor(audio_plat, dtype=tf.float32)
-        
-        frames = tf.signal.frame(tf_audio, frame_length=160000, frame_step=160000, pad_end=True)
-        
-        file_embeddings = []
-        
-        for i in range(frames.shape[0]):
-            frame_input = tf.expand_dims(frames[i], 0) 
-            outputs = model.infer_tf(frame_input)
+    for batch_waveforms, batch_labels, batch_paths in tqdm(dataloader, desc="Extraction", unit="fichier"):
+        try:
+            audio_plat = batch_waveforms[0].numpy()
+            tf_audio = tf.convert_to_tensor(audio_plat, dtype=tf.float32)
             
-            if 'embeddings' in outputs:
-                emb = outputs['embeddings'].numpy()
-            elif 'embedding' in outputs:
-                emb = outputs['embedding'].numpy()
-
-            file_embeddings.append(emb)
+            frames = tf.signal.frame(tf_audio, frame_length=160000, frame_step=160000, pad_end=True)
+            filename = Path(batch_paths[0]).stem
             
-        mean_vector = np.mean(file_embeddings, axis=0)
-        mean_vector = np.squeeze(mean_vector)
+            for i in range(frames.shape[0]):
+                frame_input = tf.expand_dims(frames[i], 0) 
+                outputs = model.infer_tf(frame_input)
+                
+                if 'embeddings' in outputs:
+                    emb = outputs['embeddings'].numpy()
+                elif 'embedding' in outputs:
+                    emb = outputs['embedding'].numpy()
+                embeddings.append(np.squeeze(emb))
+                
+                if(repertory_name == "train_audio"):
+                    labels.append(batch_labels[0])
 
-        embeddings.append(mean_vector)
-        labels.extend(batch_labels)
+                timestamp = (i + 1) * 5
+                row_ids.append(f"{filename}_{timestamp}")
+                
+                
+
+        except Exception as e:
+            print(f"\nErreur sur {batch_paths[0]} : {e}")
+            continue
+
+    save_repertory = Path('ressource/processed_data4')
+    save_repertory.mkdir(parents=True, exist_ok=True)
+
+    np.save(save_repertory / f"X_embeddings_perch_{repertory_name}.npy", np.vstack(embeddings))
+    
+    if repertory_name == "train_audio":
+        np.save(save_repertory / f"y_labels_{repertory_name}.npy", np.array(labels))
         
-    except Exception as e:
-        print(f"\nErreur sur {batch_paths[0]} : {e}")
-        continue
+    np.save(save_repertory / f"row_ids_{repertory_name}.npy", np.array(row_ids))
 
-save_repertory = Path('ressource/processed_data')
-save_repertory.mkdir(parents=True, exist_ok=True)
-
-np.save(save_repertory / "X_embeddings_perch.npy", np.vstack(embeddings))
-np.save(save_repertory / "y_labels.npy", np.array(labels))
-
-print(f"Data saved: {save_repertory} !")
+    print(f"Data saved for {repertory_name} in {save_repertory} !")

@@ -41,6 +41,53 @@ def increase_rare_birds(X, y, min_threshold=5, noise=0.02):
         
     return X_final, y_final
 
+def createLabelsWithCsv(processedData, csvFile):
+    data_path = Path(processedData)
+    df_labels = pd.read_csv(csvFile)
+    extracted_row_ids = np.load(data_path)
+    df_labels['filename_clean'] = df_labels['filename'].str.replace('.ogg', '', regex=False)
+    df_labels['end_sec'] = df_labels['end'].apply(lambda x: int(x.split(':')[2]) + int(x.split(':')[1]) * 60)
+    df_labels['row_id'] = df_labels['filename_clean'] + "_" + df_labels['end_sec'].astype(str)
+    # --- 3. TRANSFORMATION MULTI-LABEL (LA MAGIE PANDAS) ---
+    # La fonction get_dummies sépare la chaîne par ';' et crée automatiquement 
+    # des colonnes avec des 1 ou des 0 pour chaque espèce rencontrée !
+    df_y = df_labels['primary_label'].str.get_dummies(sep=';')
+
+
+    # On recolle le row_id à cette nouvelle matrice de 0 et de 1
+    df_y['row_id'] = df_labels['row_id']
+
+
+    # --- 4. ALIGNEMENT AVEC TES FEATURES (TRÈS IMPORTANT) ---
+    # On crée un DataFrame avec l'ordre exact de tes features X
+    df_extracted = pd.DataFrame({'row_id': extracted_row_ids})
+
+    # On fait une jointure (merge) à gauche. Ça va associer les bons labels aux bons sons.
+    # Si un extrait de Perch n'a pas de label dans le CSV, il aura des NaN (que l'on remplace par 0)
+    df_final = df_extracted.merge(df_y, on='row_id', how='left').fillna(0)
+
+    df_sub = pd.read_csv("ressource/raw_data/sample_submission.csv")
+
+    # 2. On récupère la liste des 234 espèces (toutes les colonnes sauf 'row_id')
+    especes_officielles = [col for col in df_sub.columns if col != 'row_id']
+
+    # 3. On enlève la colonne texte de notre df_final
+    df_y_seulement = df_final.drop(columns=['row_id'])
+
+    # 4. LA MAGIE : On force le DataFrame à avoir ces 234 colonnes.
+    # S'il trouve l'espèce, il garde tes 0 et 1. 
+    # S'il ne la trouve pas (les 159 manquantes), il crée la colonne et la remplit de 0 !
+    df_y_complet = df_y_seulement.reindex(columns=especes_officielles, fill_value=0)
+
+    # --- 5. SAUVEGARDE ---
+    matrice_y_numpy = df_y_complet.to_numpy()
+
+    np.save("ressource/processed_data4/y_labels_train_soundscapes.npy", matrice_y_numpy)
+
+    print(f"Nouvelle forme de la matrice Y : {matrice_y_numpy.shape}")
+
+
+
 def load_data():
     '''Only use this for pre trained embedding models, use load_data2 otherwise.'''
     base_path = Path("ressource/processed_data")
