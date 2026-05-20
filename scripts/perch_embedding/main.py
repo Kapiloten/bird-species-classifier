@@ -1,168 +1,93 @@
 import sys
 from pathlib import Path
+import time
+
+import numpy as np
+from sklearn.model_selection import GridSearchCV, learning_curve
+from sklearn.multiclass import OneVsRestClassifier
 sys.path.append(str(Path(__file__).parent.parent.parent))
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, StackingClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.pipeline import make_pipeline
-from scripts.utils import load_data, save_results
+from scripts.utils import load_data, plot_learning_curve, plot_model_comparison, plot_pr_curve, plot_top_flop_f1, plot_worst_confusion
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
-from lightgbm import LGBMClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import VotingClassifier
 
 
 
 def main():
-    x_train, y_train, x_val, y_val, x_test, y_test = load_data()
-
-    #print("Logistic Regression algorithm: ")
-    logit = make_pipeline(
-        SimpleImputer(strategy="median"),
-        StandardScaler(),
-        LogisticRegression(
-            max_iter=1000,     
-            C=1.0,  
-            class_weight="balanced",
-            random_state=15,
-            n_jobs=-1
-        )
+    X_train, Y_train, X_val, Y_val, X_test, Y_test, X_nLabeled, Y_nLabeled, Z_nLabeled = load_data()
+    grid_logreg = {
+        'estimator__C': [0.001, 0.01, 0.1, 1.0, 10.0]
+    }
+    model_logreg = GridSearchCV(
+        OneVsRestClassifier(LogisticRegression(class_weight='balanced', max_iter=1000)),
+        param_grid=grid_logreg, 
+        cv=3, 
+        scoring='f1_macro'
     )
-    '''logit.fit(x_train, y_train)
+    model_logreg.fit(X_train, Y_train)
+    print(f"\n Best hyperparam : {model_logreg.best_params_}")
 
-    val_predictions = logit.predict(x_val)
-    test_predictions = logit.predict(x_test)
 
-    val_accuracy = accuracy_score(y_val, val_predictions)
-    val_f1 = f1_score(y_val, val_predictions, average="macro")
-    test_accuracy = accuracy_score(y_test, test_predictions)
-    test_f1 = f1_score(y_test, test_predictions, average="macro")
-
-    print(f"Validation accuracy : {val_accuracy:.4f}")
-    print(f"Validation F1 macro : {val_f1:.4f}")
-    print(f"Test accuracy       : {test_accuracy:.4f}")
-    print(f"Test F1 macro       : {test_f1:.4f}")
-
-    save_results("Logistic Regression","ressource/results/ml_classic/perch_embedding/log_reg",y_test, test_predictions, test_accuracy, test_f1)'''
+    grid_svm_rbf = {
+        'estimator__C': [1.0, 10.0],
+        'estimator__gamma': ['scale', 'auto'] 
+    }
     
-
-    #bagging + random embed
-    #print("Random Forest algorithm: ")
-    rf = make_pipeline(
-        SimpleImputer(strategy="median"),
-        RandomForestClassifier(
-            n_estimators=200,
-            class_weight="balanced",
-            random_state=15,
-            n_jobs=-1,
-        ),
+    model_svm = GridSearchCV(
+        OneVsRestClassifier(SVC(kernel='rbf', class_weight='balanced', max_iter=2000)),
+        param_grid=grid_svm_rbf, 
+        cv=3, 
+        scoring='f1_macro',
+        n_jobs=-1  
     )
+    model_svm.fit(X_train, Y_train)
+    print(model_svm.best_params_)
 
-    '''rf.fit(x_train, y_train)
+    Y_val_pred_logreg = (model_logreg.best_estimator_.predict_proba(X_val) > 0.5).astype(int)
+    score_logreg = f1_score(Y_val, Y_val_pred_logreg, average='macro')
+
+    Y_val_pred_svm = (model_svm.best_estimator_.decision_function(X_val) > 0).astype(int)
+    score_svm = f1_score(Y_val, Y_val_pred_svm, average='macro')
+
+    print(f"Final score LogReg : {score_logreg:.4f}")
+    print(f"Final score SVM: {score_svm:.4f}")
+    plot_model_comparison(score_logreg, score_svm)
+
+
+    '''model = "LogReg_Perch"
+
+
+    print("\n--- Final training by merging validation set with training set ---")
+    X_train_merge = np.concatenate((X_train, X_val))
+    Y_train_merge = np.concatenate((Y_train, Y_val))
     
-    val_predictions = rf.predict(x_val)
-    test_predictions = rf.predict(x_test)
+    base_model = OneVsRestClassifier(LogisticRegression(C=best_c, class_weight='balanced', max_iter=1000, n_jobs=-1))
+    
+    start_time = time.time()
+    base_model.fit(X_train_merge, Y_train_merge)
+    print(f"Model trained in {time.time() - start_time:.1f} secondes.")
 
-    val_accuracy = accuracy_score(y_val, val_predictions)
-    val_f1 = f1_score(y_val, val_predictions, average="macro")
-    test_accuracy = accuracy_score(y_test, test_predictions)
-    test_f1 = f1_score(y_test, test_predictions, average="macro")
+    print("Evaluation on the test set...")
+    Y_test_proba_base = base_model.predict_proba(X_test)
+    Y_test_pred_base = (Y_test_proba_base > 0.5).astype(int)
 
-    print(f"Validation accuracy : {val_accuracy:.4f}")
-    print(f"Validation F1 macro : {val_f1:.4f}")
-    print(f"Test accuracy       : {test_accuracy:.4f}")
-    print(f"Test F1 macro       : {test_f1:.4f}")
-
-    save_results("Random Forest","ressource/results/ml_classic/perch_embedding/random_forest",y_test, test_predictions, test_accuracy, test_f1)'''
-
-
-    #svm with gaussian kernel
-    #print("SVM RBF algorithm: ")
-    svm = make_pipeline(
-        SimpleImputer(strategy="median"),
-        StandardScaler(),
-        SVC(kernel="rbf", C=10.0, gamma="scale", class_weight="balanced", probability=True),
+    print("Plotting learning curve...")
+    train_sizes, train_scores, val_scores = learning_curve(
+        base_model, X_train, Y_train, cv=3, scoring='f1_macro', n_jobs=-1,
+        train_sizes=np.linspace(0.1, 1.0, 5)
     )
-
-    '''svm.fit(x_train, y_train)
-
-    val_predictions = svm.predict(x_val)
-    test_predictions = svm.predict(x_test)
-
-    val_accuracy = accuracy_score(y_val, val_predictions)
-    val_f1 = f1_score(y_val, val_predictions, average="macro")
-    test_accuracy = accuracy_score(y_test, test_predictions)
-    test_f1 = f1_score(y_test, test_predictions, average="macro")
-
-    print(f"Validation accuracy : {val_accuracy:.4f}")
-    print(f"Validation F1 macro : {val_f1:.4f}")
-    print(f"Test accuracy       : {test_accuracy:.4f}")
-    print(f"Test F1 macro       : {test_f1:.4f}")
-
-    save_results("SVM RBF","ressource/results/ml_classic/perch_embedding/svm",y_test, test_predictions, test_accuracy, test_f1)'''
-
-    '''#boosting
-    print("Light GBM: ")
-    gbm = make_pipeline(
-        SimpleImputer(strategy="median"),
-        LGBMClassifier(
-            n_estimators=150,
-            learning_rate=0.3, 
-            class_weight="balanced",
-            reg_alpha=0.1,        
-            reg_lambda=0.1,
-            random_state=15,
-            n_jobs=-1,
-            verbose=-1
-        )
-    )
-    gbm.fit(x_train, y_train)
-
-    val_predictions = gbm.predict(x_val)
-    test_predictions = gbm.predict(x_test)
-
-    val_accuracy = accuracy_score(y_val, val_predictions)
-    val_f1 = f1_score(y_val, val_predictions, average="macro")
-    test_accuracy = accuracy_score(y_test, test_predictions)
-    test_f1 = f1_score(y_test, test_predictions, average="macro")
-
-    print(f"Validation accuracy : {val_accuracy:.4f}")
-    print(f"Validation F1 macro : {val_f1:.4f}")
-    print(f"Test accuracy       : {test_accuracy:.4f}")
-    print(f"Test F1 macro       : {test_f1:.4f}")
-
-    save_results("Light GBM","ressource/results/ml_classic/perch_embedding/light_gbm",y_test, test_predictions, test_accuracy, test_f1)'''
-
-    print("Soft voting using rf, svm and logit: ")
-    soft_voting = VotingClassifier(
-        estimators=[
-            ('rf', rf), 
-            ('svm', svm), 
-            ('logit', logit),
-        ],
-        voting='soft',
-        weights=[1, 2, 3]
-    )
-
-    soft_voting.fit(x_train, y_train)
-
-    val_predictions = soft_voting.predict(x_val)
-    test_predictions = soft_voting.predict(x_test)
-
-    val_accuracy = accuracy_score(y_val, val_predictions)
-    val_f1 = f1_score(y_val, val_predictions, average="macro")
-    test_accuracy = accuracy_score(y_test, test_predictions)
-    test_f1 = f1_score(y_test, test_predictions, average="macro")
-
-    print(f"Validation accuracy : {val_accuracy:.4f}")
-    print(f"Validation F1 macro : {val_f1:.4f}")
-    print(f"Test accuracy       : {test_accuracy:.4f}")
-    print(f"Test F1 macro       : {test_f1:.4f}")
-    save_results("Soft voting model (rf + svm + logit)","ressource/results/ml_classic/perch_embedding/soft_voting",y_test, test_predictions, test_accuracy, test_f1)
-
-
+    plot_learning_curve(train_sizes, train_scores, val_scores, model)
+    
+    # 2. Évaluation classique
+    plot_pr_curve(Y_test, Y_test_proba_base, model)
+    plot_top_flop_f1(Y_test, Y_test_pred_base, model)
+    plot_worst_confusion(Y_test, Y_test_pred_base, model)'''
 
     
 if __name__ == "__main__":

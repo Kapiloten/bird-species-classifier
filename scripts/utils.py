@@ -1,9 +1,12 @@
 from pathlib import Path
 
-import pandas as pd
-from sklearn.metrics import classification_report, confusion_matrix
 import numpy as np
-from sklearn.model_selection import train_test_split
+import pandas as pd
+from sklearn.metrics import f1_score, precision_recall_curve, average_precision_score, confusion_matrix,precision_recall_curve, average_precision_score, precision_score
+from sklearn.model_selection import train_test_split, GroupShuffleSplit
+import matplotlib.pyplot as plt
+import seaborn as sns
+import umap
 
 
 #Duplicate vectors from rare classes by adding a small gaussian noise to make the split for train/test/val possible
@@ -41,74 +44,108 @@ def increase_rare_birds(X, y, min_threshold=5, noise=0.02):
         
     return X_final, y_final
 
+def index_to_labels(index):
+    df_sub = pd.read_csv("ressource/raw_data/sample_submission.csv")
+    Y = np.load("ressource/processed_data4/y_labels_train_soundscapes.npy")
+
+    species = [col for col in df_sub.columns if col != 'row_id']
+    vect = Y[index]
+    indexes = np.where(vect == 1)[0]
+
+    for index in indexes:
+        print(f"{species[index]}")
+
+
 def createLabelsWithCsv(processedData, csvFile):
     data_path = Path(processedData)
     df_labels = pd.read_csv(csvFile)
     extracted_row_ids = np.load(data_path)
+
     df_labels['filename_clean'] = df_labels['filename'].str.replace('.ogg', '', regex=False)
     df_labels['end_sec'] = df_labels['end'].apply(lambda x: int(x.split(':')[2]) + int(x.split(':')[1]) * 60)
     df_labels['row_id'] = df_labels['filename_clean'] + "_" + df_labels['end_sec'].astype(str)
-    # --- 3. TRANSFORMATION MULTI-LABEL (LA MAGIE PANDAS) ---
-    # La fonction get_dummies sépare la chaîne par ';' et crée automatiquement 
-    # des colonnes avec des 1 ou des 0 pour chaque espèce rencontrée !
+
     df_y = df_labels['primary_label'].str.get_dummies(sep=';')
-
-
-    # On recolle le row_id à cette nouvelle matrice de 0 et de 1
     df_y['row_id'] = df_labels['row_id']
-
-
-    # --- 4. ALIGNEMENT AVEC TES FEATURES (TRÈS IMPORTANT) ---
-    # On crée un DataFrame avec l'ordre exact de tes features X
     df_extracted = pd.DataFrame({'row_id': extracted_row_ids})
-
-    # On fait une jointure (merge) à gauche. Ça va associer les bons labels aux bons sons.
-    # Si un extrait de Perch n'a pas de label dans le CSV, il aura des NaN (que l'on remplace par 0)
+    df_y = df_y.groupby('row_id').max().reset_index()
     df_final = df_extracted.merge(df_y, on='row_id', how='left').fillna(0)
-
     df_sub = pd.read_csv("ressource/raw_data/sample_submission.csv")
-
-    # 2. On récupère la liste des 234 espèces (toutes les colonnes sauf 'row_id')
-    especes_officielles = [col for col in df_sub.columns if col != 'row_id']
-
-    # 3. On enlève la colonne texte de notre df_final
-    df_y_seulement = df_final.drop(columns=['row_id'])
-
-    # 4. LA MAGIE : On force le DataFrame à avoir ces 234 colonnes.
-    # S'il trouve l'espèce, il garde tes 0 et 1. 
-    # S'il ne la trouve pas (les 159 manquantes), il crée la colonne et la remplit de 0 !
-    df_y_complet = df_y_seulement.reindex(columns=especes_officielles, fill_value=0)
-
-    # --- 5. SAUVEGARDE ---
-    matrice_y_numpy = df_y_complet.to_numpy()
+    official_species = [col for col in df_sub.columns if col != 'row_id']
+    df_y_only = df_final.drop(columns=['row_id'])
+    df_y_complete = df_y_only.reindex(columns=official_species, fill_value=0)
+    matrice_y_numpy = df_y_complete.to_numpy()
 
     np.save("ressource/processed_data4/y_labels_train_soundscapes.npy", matrice_y_numpy)
 
-    print(f"Nouvelle forme de la matrice Y : {matrice_y_numpy.shape}")
+def partition_data(X,Y,Z):
+    '''Separates the data into two subsets: labeled and non labeled.\n
+       Return: A 6 tuple (X_labeled, Y_labeled, Z_labeled, X_non_labled, Y_non_lableled, Z_non_labeled)
+    '''
+    mask_labels = Y.sum(axis=1) >= 1
+    
+    mask_no_label = ~mask_labels 
+    
+    X_labeled = X[mask_labels]
+    Y_labeled = Y[mask_labels]
+    Z_labeled = Z[mask_labels]
+    
+    X_non_labeled = X[mask_no_label]
+    Y_non_labeled = Y[mask_no_label]
+    Z_non_labeled = Z[mask_no_label]
+    
+    return X_labeled, Y_labeled, Z_labeled, X_non_labeled, Y_non_labeled, Z_non_labeled
 
-
+def mono_label_to_multi(Y_mono):
+    df_sub = pd.read_csv("ressource/raw_data/sample_submission.csv")
+    especes_officielles = [str(col).strip() for col in df_sub.columns if col != 'row_id']
+    
+    s_y = pd.Series(Y_mono)
+    
+    df_y = pd.get_dummies(s_y, dtype=int)
+    
+    df_y_complete = df_y.reindex(columns=especes_officielles, fill_value=0)
+    
+    return df_y_complete.to_numpy()
 
 def load_data():
     '''Only use this for pre trained embedding models, use load_data2 otherwise.'''
-    base_path = Path("ressource/processed_data")
-    X = np.load(base_path / "X_embeddings_perch.npy")
-    Y = np.load(base_path / "y_labels.npy")
+    base_path = Path("ressource/processed_data4")
+    createLabelsWithCsv("ressource/processed_data4/row_ids_train_soundscapes.npy", "ressource/raw_data/train_soundscapes_labels.csv")
+    X_train_audio = np.load(base_path / "X_embeddings_perch_train_audio.npy")
+    Y_train_audio = np.load(base_path / "y_labels_train_audio.npy")
+    Z_train_audio = np.load(base_path / "row_ids_train_audio.npy")
+    X_soundscapes = np.load(base_path / "X_embeddings_perch_train_soundscapes.npy")
+    Y_soundscapes = np.load(base_path / "y_labels_train_soundscapes.npy")
+    Z_train_soundscapes = np.load(base_path / "row_ids_train_soundscapes.npy")
+    
 
-    X,Y = increase_rare_birds(X,Y)
+    X_labeled,Y_labeled, Z_labeled, X_nLabeled, Y_nLabeled, Z_nLabeled = partition_data(X_soundscapes, Y_soundscapes, Z_train_soundscapes)
+    Y_multi_label = mono_label_to_multi(Y_train_audio)
 
+    X_concat = np.concatenate((X_train_audio, X_labeled))
+    Y_concat = np.concatenate((Y_multi_label, Y_labeled))
+    Z_concat = np.concatenate((Z_train_audio, Z_labeled))
+    Z_concat = np.array(["_".join(str(z).split("_")[:-1]) for z in Z_concat])
 
-    X_temp, X_test, Y_temp, Y_test = train_test_split(
-        X, Y, 
-        test_size=0.20, 
-        stratify=Y,   
-        random_state=12 
-    )
-    X_train, X_val, Y_train, Y_val = train_test_split(
-        X_temp, Y_temp, 
-        test_size=0.1875, 
-        stratify=Y_temp, 
-        random_state=12
-    )
+    gss_test = GroupShuffleSplit(n_splits=1, test_size=0.20, random_state=15)
+    train_val_idx, test_idx = next(gss_test.split(X_concat, Y_concat, groups=Z_concat))
+    X_test = X_concat[test_idx]
+    Y_test = Y_concat[test_idx]
+    X_temp = X_concat[train_val_idx]
+    Y_temp = Y_concat[train_val_idx]
+    Z_temp = Z_concat[train_val_idx]
+    gss_val = GroupShuffleSplit(n_splits=1, test_size=0.1875, random_state=15)
+    train_idx, val_idx = next(gss_val.split(X_temp, Y_temp, groups=Z_temp))
+    X_train = X_temp[train_idx]
+    Y_train = Y_temp[train_idx]
+
+    X_val = X_temp[val_idx]
+    Y_val = Y_temp[val_idx]
+
+    print(f"Taille Train : {len(X_train)} ({len(X_train)/len(X_concat)*100:.1f}%)")
+    print(f"Taille Val   : {len(X_val)} ({len(X_val)/len(X_concat)*100:.1f}%)")
+    print(f"Taille Test  : {len(X_test)} ({len(X_test)/len(X_concat)*100:.1f}%)")
 
     return (
         X_train,
@@ -116,7 +153,10 @@ def load_data():
         X_val,
         Y_val,
         X_test,
-        Y_test
+        Y_test,
+        X_nLabeled, 
+        Y_nLabeled, 
+        Z_nLabeled
     )
 
 def load_data2():
@@ -142,18 +182,230 @@ def load_data2():
     )
 
 
-def save_results(modelName,path,y_test, predictions, test_accuracy, test_f1):
-    RESULTS_DIR = Path(path)
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+def plot_learning_curve(train_sizes, train_scores, val_scores, model_name):
+    
+    train_mean = np.mean(train_scores, axis=1)
+    train_std = np.std(train_scores, axis=1)
+    val_mean = np.mean(val_scores, axis=1)
+    val_std = np.std(val_scores, axis=1)
 
-    metrics = pd.DataFrame(
-        [{"model": modelName, "test_accuracy": test_accuracy, "test_f1_macro": test_f1}]
-    )
-    metrics.to_csv(RESULTS_DIR / "metrics.csv", index=False)
+    plt.figure(figsize=(8, 6))
+    plt.plot(train_sizes, train_mean, label="Training score", color="blue", marker='o')
+    plt.fill_between(train_sizes, train_mean - train_std, train_mean + train_std, color="blue", alpha=0.1)
+    
+    plt.plot(train_sizes, val_mean, label="Validation score", color="red", marker='s')
+    plt.fill_between(train_sizes, val_mean - val_std, val_mean + val_std, color="red", alpha=0.1)
 
-    labels = list(np.unique(y_test))
-    report = classification_report(y_test, predictions, labels=labels, zero_division=0)
-    (RESULTS_DIR / "classification_report.txt").write_text(report, encoding="utf-8")
+    plt.title(f"Learning curve for {model_name}", fontsize=14)
+    plt.xlabel("Training sample size")
+    plt.ylabel("F1-Score")
+    plt.legend(loc="lower right")
+    plt.tight_layout()
+    plt.savefig(f"learning_curve_{model_name}.png", dpi=300)
+    plt.show()
 
-    matrix = confusion_matrix(y_test, predictions, labels=labels)
-    pd.DataFrame(matrix, index=labels, columns=labels).to_csv(RESULTS_DIR / "confusion_matrix.csv")
+def plot_pr_curve(Y_true, Y_prob, model_name): 
+    precision, recall, _ = precision_recall_curve(Y_true.ravel(), Y_prob.ravel())
+    avg_precision = average_precision_score(Y_true, Y_prob, average="micro")
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(recall, precision, color="purple", lw=2, label=f'Micro-average PR (AP = {avg_precision:.2f})')
+    
+    plt.title(f"Precision-Recall for {model_name}", fontsize=14)
+    plt.xlabel("Recall - Birds found")
+    plt.ylabel("Precision")
+    plt.legend(loc="lower left")
+    plt.xlim([0.0, 1.05])
+    plt.ylim([0.0, 1.05])
+    plt.tight_layout()
+    plt.savefig(f"pr_curve_{model_name}.png", dpi=300)
+    plt.show()
+
+
+def plot_top_flop_f1(Y_true, Y_pred, model_name):
+    df_sub = pd.read_csv("ressource/raw_data/sample_submission.csv")
+    species_names = [str(col).strip() for col in df_sub.columns if col != 'row_id']
+    f1_scores = f1_score(Y_true, Y_pred, average=None)
+    
+    score_dict = {nom: score for nom, score in zip(species_names, f1_scores)}
+    sorted_scores = sorted(score_dict.items(), key=lambda item: item[1], reverse=True)
+    
+    top_5 = sorted_scores[:5]
+    flop_5 = sorted_scores[-5:]
+    
+    to_plot = flop_5 + top_5
+    noms = [x[0] for x in to_plot]
+    scores = [x[1] for x in to_plot]
+    
+    colors = ['#e74c3c']*5 + ['#2ecc71']*5
+
+    plt.figure(figsize=(10, 7))
+    plt.barh(noms, scores, color=colors)
+    plt.axvline(x=np.mean(f1_scores), color='gray', linestyle='--', label=f'Moyenne globale ({np.mean(f1_scores):.2f})')
+    
+    plt.title(f"5 best VS 5 worst for {model_name}", fontsize=14)
+    plt.xlabel("F1-Score")
+    plt.xlim(0, 1)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(f"top_flop_f1_{model_name}.png", dpi=300)
+    plt.show()
+
+def plot_worst_confusion(Y_true, Y_pred, model_name):
+    df_sub = pd.read_csv("ressource/raw_data/sample_submission.csv")
+    species_names = [str(col).strip() for col in df_sub.columns if col != 'row_id']
+    f1_scores = f1_score(Y_true, Y_pred, average=None)
+    pire_idx = np.argmin(f1_scores)
+    worst_species = species_names[pire_idx]
+    
+    cm = confusion_matrix(Y_true[:, pire_idx], Y_pred[:, pire_idx])
+    
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Reds', cbar=False,
+                xticklabels=['Missing (Prediction)', 'Present (Prediction)'],
+                yticklabels=['Missing (Truth)', 'Present (Truth)'])
+    
+    plt.title(f"Error matrix: {worst_species}\n(Worst species) for {model_name}", fontsize=14)
+    plt.ylabel('Ground Truth')
+    plt.xlabel('Prediction')
+    plt.tight_layout()
+    plt.savefig(f"confusion_worst_{model_name}.png", dpi=300)
+    plt.show()
+
+def plot_pseudo_label_tradeoff(Y_true_test, Y_proba_test, model_name):
+    
+    y_true_flat = Y_true_test.ravel()
+    y_prob_flat = Y_proba_test.ravel()
+    
+    thresholds = np.linspace(0.5, 0.99, 50)
+    precisions = []
+    volumes = []
+    
+    for threshold in thresholds:
+        pseudo_labels = (y_prob_flat >= threshold).astype(int)
+        
+        volume = np.sum(pseudo_labels)
+        volumes.append(volume)
+        
+        if volume > 0:
+            prec = precision_score(y_true_flat, pseudo_labels, zero_division=0)
+        else:
+            prec = 1.0 
+        precisions.append(prec)
+
+    plt.style.use('seaborn-v0_8-whitegrid')
+    fig, ax1 = plt.subplots(figsize=(9, 6))
+
+    color = '#2ecc71' # Vert
+    ax1.set_xlabel('Threshold', fontsize=12)
+    ax1.set_ylabel('Precision', color=color, fontsize=12)
+    ax1.plot(thresholds, precisions, color=color, linewidth=3, label="Precision")
+    ax1.tick_params(axis='y', labelcolor=color)
+    ax1.set_ylim([0.0, 1.05])
+
+    ax2 = ax1.twinx()  
+    color = '#e74c3c' # Rouge
+    ax2.set_ylabel('Number of pseudo-labels kept', color=color, fontsize=12)  
+    ax2.plot(thresholds, volumes, color=color, linewidth=3, linestyle='--', label="Volume")
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    chosen_threshold = 0.90
+    plt.axvline(x=chosen_threshold, color='gray', linestyle=':', linewidth=2)
+    plt.text(chosen_threshold + 0.01, max(volumes)*0.8, f'chosen_threshold : {chosen_threshold}', color='gray', fontsize=11, fontweight='bold')
+
+    plt.title(f"Pseudo labeling justification for {model_name}", fontsize=14)
+    fig.tight_layout() 
+    plt.savefig(f"pseudo_label_justification_{model_name}.png", dpi=300)
+    plt.show()
+
+
+def plot_umap_projection(X_true, X_pseudo, X_noise):    
+    X_total = np.vstack((X_true, X_pseudo, X_noise))
+    
+    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='cosine', random_state=15)
+    embedding_2d = reducer.fit_transform(X_total)
+    
+    len_true = len(X_true)
+    len_pseudo = len(X_pseudo)
+    
+    emb_true = embedding_2d[:len_true]
+    emb_pseudo = embedding_2d[len_true : len_true + len_pseudo]
+    emb_noise = embedding_2d[len_true + len_pseudo:]
+
+    plt.style.use('seaborn-v0_8-whitegrid')
+    plt.figure(figsize=(10, 8))
+    
+    plt.scatter(emb_noise[:, 0], emb_noise[:, 1], c='#bdc3c7', s=15, alpha=0.5, label="noise")
+    
+    plt.scatter(emb_true[:, 0], emb_true[:, 1], c='#3498db', s=40, alpha=0.8, label="True label")
+    
+    plt.scatter(emb_pseudo[:, 0], emb_pseudo[:, 1], c='#e74c3c', s=80, marker='X', edgecolors='black', label="Generated pseudo-labem (>0.90)")
+    
+    plt.title("UMAP projection (Espèce Ciblée)", fontsize=15, fontweight='bold')
+    plt.xlabel("Dimension UMAP 1")
+    plt.ylabel("Dimension UMAP 2")
+    plt.legend(loc="best", fontsize=11, frameon=True, shadow=True)
+    
+    plt.tight_layout()
+    plt.savefig("umap_projection.png", dpi=300)
+    plt.show()
+
+    
+def plot_pr_comparison(Y_test, Y_proba_base, Y_proba_final, model_name):
+
+    
+    plt.style.use('seaborn-v0_8-whitegrid')
+    plt.figure(figsize=(9, 7))
+    
+    prec_base, rec_base, _ = precision_recall_curve(Y_test.ravel(), Y_proba_base.ravel())
+    ap_base = average_precision_score(Y_test, Y_proba_base, average="micro")
+    plt.plot(rec_base, prec_base, color="#3498db", linestyle="--", linewidth=2, 
+             label=f'Base model (AP = {ap_base:.3f})')
+    
+    prec_final, rec_final, _ = precision_recall_curve(Y_test.ravel(), Y_proba_final.ravel())
+    ap_final = average_precision_score(Y_test, Y_proba_final, average="micro")
+    plt.plot(rec_final, prec_final, color="#e74c3c", linewidth=3, 
+             label=f'Final model with pseudo labels (AP = {ap_final:.3f})')
+    
+    plt.fill_between(rec_final, prec_base, prec_final, where=(prec_final > prec_base), 
+                     color='#2ecc71', alpha=0.2, label='Performance gain')
+
+    plt.title(f"Pseudo labeling impact using {model_name}", fontsize=15, fontweight='bold')
+    plt.xlabel("Recall", fontsize=12)
+    plt.ylabel("Precision", fontsize=12)
+    plt.xlim([0.0, 1.05])
+    plt.ylim([0.0, 1.05])
+    plt.legend(loc="lower left", fontsize=11, frameon=True, shadow=True)
+    
+    plt.tight_layout()
+    plt.savefig(f"conclusion_comparison_pr_{model_name}.png", dpi=300)
+    plt.show()
+
+def plot_model_comparison(score_logreg, score_svm):
+    
+    plt.style.use('seaborn-v0_8-whitegrid')
+    fig, ax = plt.subplots(figsize=(6, 5))
+    
+    modeles = ['Logistic\nRegression', 'RBF\nSVM']
+    scores = [score_logreg, score_svm]
+    
+    couleurs = ['#3498db', '#e67e22']
+    
+    barres = ax.bar(modeles, scores, color=couleurs, width=0.5)
+    
+    for barre in barres:
+        hauteur = barre.get_height()
+        ax.annotate(f'{hauteur:.3f}',
+                    xy=(barre.get_x() + barre.get_width() / 2, hauteur),
+                    xytext=(0, 5),  
+                    textcoords="offset points",
+                    ha='center', va='bottom', fontsize=12, fontweight='bold')
+
+    plt.title("Comparison between logreg and rbf_svm on the validation set)", fontsize=14, pad=15)
+    plt.ylabel("F1-Score", fontsize=12)
+    
+    plt.ylim(0, max(scores) + 0.1)
+    
+    plt.tight_layout()
+    plt.savefig("comparison_rbf_log.png", dpi=300)
+    plt.show()
