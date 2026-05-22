@@ -1,2 +1,0 @@
-model,test_accuracy,test_f1_macro
-Soft voting model (rf + svm + logit),0.8596515875245856,0.8382570736249256
