@@ -32,7 +32,7 @@ X_train, Y_train, X_val, Y_val, X_test, Y_test, X_nLabeled, Y_nLabeled, Z_nLabel
 
 SAVE_DIR = "ressource/results/benchmark_mfcc"
 os.makedirs(SAVE_DIR, exist_ok=True)
-print(f"📂 Toutes les sauvegardes seront stockées dans : {SAVE_DIR}/")
+print(f"Toutes les sauvegardes seront stockées dans : {SAVE_DIR}/")
 
 # --- CORRECTION DU LEAKAGE ET RÉCUPÉRATION DE X_VAL ---
 # -1 = Données d'entraînement strictes
@@ -85,7 +85,7 @@ dictionnaire_modeles = {
 
 
 for nom_modele, (modele, params) in dictionnaire_modeles.items():
-    print(f"\n🚀 Lancement du GridSearch pour {nom_modele}...", flush=True)
+    print(f"\n Lancement du GridSearch pour {nom_modele}...", flush=True)
     start_time = time.time()
     
     search = GridSearchCV(modele, params, cv=ps, scoring='f1_macro', n_jobs=1)
@@ -93,10 +93,9 @@ for nom_modele, (modele, params) in dictionnaire_modeles.items():
     search.fit(X_train_full, Y_train_full)
     meilleur_modele = search.best_estimator_
     
-    print(f"Terminé ! Meilleurs paramètres : {search.best_params_}", flush=True)
+    print(f"Meilleurs paramètres : {search.best_params_}", flush=True)
     print(f"Temps de recherche total : {(time.time() - start_time)/60:.1f} minutes", flush=True)
     
-    print(f"💾 Sauvegarde du modèle {nom_modele}...", flush=True)
     joblib.dump(search, f"{SAVE_DIR}/{nom_modele}_GridSearch_complet.pkl")
     joblib.dump(meilleur_modele, f"{SAVE_DIR}/{nom_modele}_Best_Model.pkl")
     
@@ -131,4 +130,3 @@ print("CLASSEMENT FINAL DES MODÈLES ", flush=True)
 for nom, score in sorted(resultats_scores.items(), key=lambda x: x[1], reverse=True):
     print(f"{nom.ljust(30)} : {score:.4f} F1-Macro")
 
-print(f"\nTout est terminé et sécurisé dans le dossier : {SAVE_DIR}/")
