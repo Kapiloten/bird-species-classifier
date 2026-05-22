@@ -10,7 +10,6 @@ OUTPUT_CSV = Path("ressource/features/features.csv")
 
 SAMPLE_RATE = 32000
 
-# Mets une valeur comme 10 pour tester rapidement, ou None pour tout traiter.
 LIMIT = None
 
 

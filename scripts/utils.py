@@ -9,7 +9,7 @@ import seaborn as sns
 import umap
 
 
-#Duplicate vectors from rare classes by adding a small gaussian noise to make the split for train/test/val possible
+#Duplicate vectors from rare classes by adding a small gaussian noise to make the split for train/test/val possible  -- On l'utilise plus finalement, c'était pas une bonne idée :)
 def increase_rare_birds(X, y, min_threshold=5, noise=0.02):
     classes, counts = np.unique(y, return_counts=True)
     rare_birds = classes[counts < min_threshold]
@@ -159,26 +159,77 @@ def load_data():
         Z_nLabeled
     )
 
-def load_data2():
-    '''Only use this for manual embedding models, use load_data2 otherwise.'''
-    META_COLUMNS = ["filepath", "filename", "label", "common_name", "scientific_name", "split"]
-    audio_features = pd.read_csv("ressource/features/features.csv")
-    mfcc_features = pd.read_csv("ressource/features/mfcc_features.csv")
-    data = audio_features.merge(mfcc_features, on=META_COLUMNS)
+def load_csv_features(features_csv="ressource/features/all_5s_features.csv", labels_csv="ressource/raw_data/train_soundscapes_labels.csv"):
+    print("Chargement et fusion des données depuis le CSV...")
+    df_all = pd.read_csv(features_csv)
 
-    feature_columns = [column for column in data.columns if column not in META_COLUMNS]
+    meta_cols = ['row_id', 'source', 'filepath', 'filename', 'start', 'end', 
+                 'start_seconds', 'end_seconds', 'duration']
+    feature_cols = [col for col in df_all.columns if col not in meta_cols]
 
-    train = data[data["split"] == "train"]
-    val = data[data["split"] == "val"]
-    test = data[data["split"] == "test"]
+    df_audio = df_all[df_all['source'] == 'train_audio'].copy()
+    df_sound = df_all[df_all['source'] == 'train_soundscapes'].copy()
+
+   
+    labels_mono_audio = df_audio['filepath'].apply(lambda x: str(x).split('/')[1]).to_numpy()
+    Y_audio = mono_label_to_multi(labels_mono_audio)
+    X_audio = df_audio[feature_cols].to_numpy()
+    Z_audio = df_audio['filename'].to_numpy()
+ 
+
+    row_ids_sound = df_sound['row_id'].to_numpy()
+    X_sound = df_sound[feature_cols].to_numpy()
+    Z_sound = df_sound['filename'].to_numpy()
+
+    df_labels = pd.read_csv(labels_csv)
+    df_labels['filename_clean'] = df_labels['filename'].str.replace('.ogg', '', regex=False)
+    df_labels['end_sec'] = df_labels['end'].apply(lambda x: int(str(x).split(':')[2]) + int(str(x).split(':')[1]) * 60)
+    df_labels['row_id_calc'] = df_labels['filename_clean'] + "_" + df_labels['end_sec'].astype(str)
+
+    df_y_dummies = df_labels['primary_label'].str.get_dummies(sep=';')
+    df_y_dummies['row_id'] = df_labels['row_id_calc']
+    df_y_grouped = df_y_dummies.groupby('row_id').max().reset_index()
+
+    df_target = pd.DataFrame({'row_id': row_ids_sound})
+    df_merged = df_target.merge(df_y_grouped, on='row_id', how='left').fillna(0)
+
+    df_sub = pd.read_csv("ressource/raw_data/sample_submission.csv")
+    official_species = [str(col).strip() for col in df_sub.columns if col != 'row_id']
+    df_merged_only_labels = df_merged.drop(columns=['row_id'])
+    Y_sound = df_merged_only_labels.reindex(columns=official_species, fill_value=0).to_numpy()
+
+
+    X_labeled, Y_labeled, Z_labeled, X_nLabeled, Y_nLabeled, Z_nLabeled = partition_data(X_sound, Y_sound, Z_sound)
+
+
+
+    X_concat = np.concatenate((X_audio, X_labeled))
+    Y_concat = np.concatenate((Y_audio, Y_labeled))
+    Z_concat = np.concatenate((Z_audio, Z_labeled))
+    
+    gss_test = GroupShuffleSplit(n_splits=1, test_size=0.20, random_state=15)
+    train_val_idx, test_idx = next(gss_test.split(X_concat, Y_concat, groups=Z_concat))
+    X_test = X_concat[test_idx]
+    Y_test = Y_concat[test_idx]
+    X_temp = X_concat[train_val_idx]
+    Y_temp = Y_concat[train_val_idx]
+    Z_temp = Z_concat[train_val_idx]
+    
+    gss_val = GroupShuffleSplit(n_splits=1, test_size=0.1875, random_state=15)
+    train_idx, val_idx = next(gss_val.split(X_temp, Y_temp, groups=Z_temp))
+    X_train = X_temp[train_idx]
+    Y_train = Y_temp[train_idx]
+    X_val = X_temp[val_idx]
+    Y_val = Y_temp[val_idx]
+
+    print(f"Taille Train : {len(X_train)} ({len(X_train)/len(X_concat)*100:.1f}%)")
+    print(f"Taille Val   : {len(X_val)} ({len(X_val)/len(X_concat)*100:.1f}%)")
+    print(f"Taille Test  : {len(X_test)} ({len(X_test)/len(X_concat)*100:.1f}%)")
+    print(f"Non Labeled  : {len(X_nLabeled)} lignes isolées pour le Pseudo-Labeling")
 
     return (
-        train[feature_columns],
-        train["label"],
-        val[feature_columns],
-        val["label"],
-        test[feature_columns],
-        test["label"],
+        X_train, Y_train, X_val, Y_val, X_test, Y_test,
+        X_nLabeled, Y_nLabeled, Z_nLabeled
     )
 
 
@@ -201,7 +252,7 @@ def plot_learning_curve(train_sizes, train_scores, val_scores, model_name):
     plt.ylabel("F1-Score")
     plt.legend(loc="lower right")
     plt.tight_layout()
-    plt.savefig(f"learning_curve_{model_name}.png", dpi=300)
+    plt.savefig(f"ressource/results/ml_classic/learning_curve_{model_name}.png", dpi=300)
     plt.show()
 
 def plot_pr_curve(Y_true, Y_prob, model_name): 
@@ -218,7 +269,7 @@ def plot_pr_curve(Y_true, Y_prob, model_name):
     plt.xlim([0.0, 1.05])
     plt.ylim([0.0, 1.05])
     plt.tight_layout()
-    plt.savefig(f"pr_curve_{model_name}.png", dpi=300)
+    plt.savefig(f"ressource/results/ml_classic/pr_curve_{model_name}.png", dpi=300)
     plt.show()
 
 
@@ -248,7 +299,7 @@ def plot_top_flop_f1(Y_true, Y_pred, model_name):
     plt.xlim(0, 1)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(f"top_flop_f1_{model_name}.png", dpi=300)
+    plt.savefig(f"ressource/results/ml_classic/top_flop_f1_{model_name}.png", dpi=300)
     plt.show()
 
 def plot_worst_confusion(Y_true, Y_pred, model_name):
@@ -269,7 +320,7 @@ def plot_worst_confusion(Y_true, Y_pred, model_name):
     plt.ylabel('Ground Truth')
     plt.xlabel('Prediction')
     plt.tight_layout()
-    plt.savefig(f"confusion_worst_{model_name}.png", dpi=300)
+    plt.savefig(f"ressource/results/ml_classic/confusion_worst_{model_name}.png", dpi=300)
     plt.show()
 
 def plot_pseudo_label_tradeoff(Y_true_test, Y_proba_test, model_name):
@@ -315,7 +366,55 @@ def plot_pseudo_label_tradeoff(Y_true_test, Y_proba_test, model_name):
 
     plt.title(f"Pseudo labeling justification for {model_name}", fontsize=14)
     fig.tight_layout() 
-    plt.savefig(f"pseudo_label_justification_{model_name}.png", dpi=300)
+    plt.savefig(f"ressource/results/ml_classic/pseudo_label_justification_{model_name}.png", dpi=300)
+    plt.show()
+
+
+def plot_umap_features_justification(X_train, Y_train, top_k=5):
+    df_sub = pd.read_csv("ressource/raw_data/sample_submission.csv")
+    species_names = [col for col in df_sub.columns if col != 'row_id']
+
+    class_counts = Y_train.sum(axis=0)
+    top_classes_idx = np.argsort(class_counts)[::-1][:top_k]
+    
+    indices_to_plot = []
+    labels_to_plot = []
+    
+    for class_idx in top_classes_idx:
+        rows = np.where(Y_train[:, class_idx] == 1)[0]
+        indices_to_plot.extend(rows)
+        name = species_names[class_idx]
+        labels_to_plot.extend([name] * len(rows))
+        
+    X_subset = X_train[indices_to_plot]
+    
+    
+    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='cosine', random_state=15)
+    embedding_2d = reducer.fit_transform(X_subset)
+    
+    plt.style.use('seaborn-v0_8-whitegrid')
+    plt.figure(figsize=(10, 8))
+    
+    sns.scatterplot(
+        x=embedding_2d[:, 0], 
+        y=embedding_2d[:, 1], 
+        hue=labels_to_plot,
+        palette="tab10", 
+        s=30,          
+        alpha=0.7,       
+        edgecolor='black',
+        linewidth=0.2
+    )
+    
+    plt.title("Natural separability of species (UMAP on MFCC)", fontsize=15, fontweight='bold')
+    plt.xlabel("Dimension UMAP 1")
+    plt.ylabel("Dimension UMAP 2")
+    
+    plt.legend(title="Top species", bbox_to_anchor=(1.05, 1), loc='upper left', frameon=True, shadow=True)
+    
+    plt.tight_layout()
+    plt.savefig("ressource/results/umap_justification_mfcc.png", dpi=300)
+    print("Graph saved : ressource/results/umap_justification_mfcc.png")
     plt.show()
 
 
@@ -347,7 +446,7 @@ def plot_umap_projection(X_true, X_pseudo, X_noise):
     plt.legend(loc="best", fontsize=11, frameon=True, shadow=True)
     
     plt.tight_layout()
-    plt.savefig("umap_projection.png", dpi=300)
+    plt.savefig("ressource/results/ml_classic/umap_projection.png", dpi=300)
     plt.show()
 
     
@@ -378,7 +477,7 @@ def plot_pr_comparison(Y_test, Y_proba_base, Y_proba_final, model_name):
     plt.legend(loc="lower left", fontsize=11, frameon=True, shadow=True)
     
     plt.tight_layout()
-    plt.savefig(f"conclusion_comparison_pr_{model_name}.png", dpi=300)
+    plt.savefig(f"ressource/results/ml_classic/conclusion_comparison_pr_{model_name}.png", dpi=300)
     plt.show()
 
 def plot_model_comparison(score_logreg, score_svm):
@@ -407,5 +506,5 @@ def plot_model_comparison(score_logreg, score_svm):
     plt.ylim(0, max(scores) + 0.1)
     
     plt.tight_layout()
-    plt.savefig("comparison_rbf_log.png", dpi=300)
+    plt.savefig("ressource/results/ml_classic/comparison_rbf_log.png", dpi=300)
     plt.show()
