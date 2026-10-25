@@ -1,0 +1,2 @@
+model,test_accuracy,test_f1_macro
+SVM RBF,0.8461646529924136,0.8008666481765796

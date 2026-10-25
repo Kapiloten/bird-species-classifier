@@ -1,0 +1,2 @@
+model,test_accuracy,test_f1_macro
+Light GBM,0.2726889575723518,0.19686635119299864

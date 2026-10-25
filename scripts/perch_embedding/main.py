@@ -3,36 +3,34 @@ from pathlib import Path
 import time
 
 import numpy as np
-from sklearn.model_selection import GridSearchCV, learning_curve
+from sklearn.model_selection import GridSearchCV
 from sklearn.multiclass import OneVsRestClassifier
 sys.path.append(str(Path(__file__).parent.parent.parent))
-import pandas as pd
-from sklearn.ensemble import RandomForestClassifier, StackingClassifier
-from sklearn.impute import SimpleImputer
-from sklearn.metrics import accuracy_score, f1_score
-from sklearn.pipeline import make_pipeline
-from scripts.utils import load_data, plot_learning_curve, plot_model_comparison, plot_pr_comparison, plot_pr_curve, plot_pseudo_label_tradeoff, plot_top_flop_f1, plot_umap_projection, plot_worst_confusion
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC, LinearSVC
+from sklearn.metrics import f1_score
+from scripts.utils import load_data, plot_pr_comparison, plot_pr_curve, plot_pseudo_label_tradeoff, plot_top_flop_f1, plot_umap_projection, plot_worst_confusion
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import VotingClassifier
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.kernel_approximation import Nystroem
 import joblib
-from sklearn.neighbors import KNeighborsClassifier
 
 
 
 
 def main():
-    X_train, Y_train, X_val, Y_val, X_test, Y_test, X_nLabeled, Y_nLabeled, Z_nLabeled = load_data()
+    import argparse
+    from scripts.project_paths import project_path
+    parser = argparse.ArgumentParser(description="Grouped multi-label Perch logistic regression and pseudo-labeling.")
+    parser.add_argument("--embeddings-dir", default="ressource/processed_data4")
+    parser.add_argument("--output-dir", default="ressource/results")
+    args = parser.parse_args()
+    output = project_path(args.output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    X_train, Y_train, X_val, Y_val, X_test, Y_test, X_nLabeled, Y_nLabeled, Z_nLabeled = load_data(args.embeddings_dir)
     grid_logreg = {
         'estimator__C': [0.001, 0.01, 0.1, 1.0, 10.0]
     }
     model_logreg = GridSearchCV(
         OneVsRestClassifier(LogisticRegression(class_weight='balanced', max_iter=1000)),
-        param_grid=grid_logreg, 
-        cv=3, 
+        param_grid=grid_logreg,
+        cv=3,
         scoring='f1_macro'
     )
     model_logreg.fit(X_train, Y_train)
@@ -41,22 +39,22 @@ def main():
 
     '''grid_svm_rbf = {
         'estimator__svc__C': [0.001,1.0, 10.0],
-        'estimator__svc__gamma': ['scale', 'auto'] 
+        'estimator__svc__gamma': ['scale', 'auto']
     }
-    
+
     svm_pipeline = make_pipeline(
-        StandardScaler(), 
+        StandardScaler(),
         SVC(kernel='rbf', class_weight='balanced', max_iter=2000)
     )
 
     model_svm = GridSearchCV(
         OneVsRestClassifier(svm_pipeline),
-        param_grid=grid_svm_rbf, 
-        cv=3, 
+        param_grid=grid_svm_rbf,
+        cv=3,
         scoring='f1_macro',
-        n_jobs=-1  
+        n_jobs=-1
     )
-    
+
     model_svm.fit(X_train, Y_train)
     print(model_svm.best_params_)'''
 
@@ -75,20 +73,20 @@ def main():
     print("\n--- Entraînement final sur Train + Val ---")
     X_train_merge = np.concatenate((X_train, X_val))
     Y_train_merge = np.concatenate((Y_train, Y_val))
-    
-    
+
+
     print("Entraînement LogReg Final...")
     final_logreg = OneVsRestClassifier(LogisticRegression(C=0.001, class_weight='balanced', max_iter=1000), n_jobs=-1)
     final_logreg.fit(X_train_merge, Y_train_merge)
-    
-    joblib.dump(final_logreg, 'ressource/results/final_logreg_model.pkl')
-    
+
+    joblib.dump(final_logreg, output / 'final_logreg_model.pkl')
+
 
     print("\n--- Prédictions sur le set de Test ---")
-    
+
     Y_test_proba_logreg = final_logreg.predict_proba(X_test)
     Y_test_pred_logreg = (Y_test_proba_logreg > 0.5).astype(int)
-    
+
 
     score_logreg = f1_score(Y_test, Y_test_pred_logreg, average='macro')
     print(f"Final score LogReg : {score_logreg:.4f}")
@@ -97,21 +95,21 @@ def main():
 
     print("\n--- Génération des graphiques LogReg ---")
     nom_logreg = "LogReg_Perch"
-    
-    
+
+
     plot_pr_curve(Y_test, Y_test_proba_logreg, nom_logreg)
     plot_top_flop_f1(Y_test, Y_test_pred_logreg, nom_logreg)
     plot_worst_confusion(Y_test, Y_test_pred_logreg, nom_logreg)
 
 
-    
+
     print("\n--- Début du Pseudo-Labeling ---")
 
     print("Prédiction sur les données non étiquetées...")
     proba_unlabeled = final_logreg.predict_proba(X_nLabeled)
 
     seuil_confiance = 0.9
-    
+
     Y_pseudo = (proba_unlabeled >= seuil_confiance).astype(int)
 
 
@@ -126,16 +124,16 @@ def main():
 
     print("\n--- Entraînement du modèle augmenté ---")
     logreg_pseudo = OneVsRestClassifier(LogisticRegression(C=0.001, class_weight='balanced', max_iter=1000), n_jobs=4)
-    
+
     start_time = time.time()
     logreg_pseudo.fit(X_train_augmented, Y_train_augmented)
 
     print(f"Modèle augmenté entraîné en {time.time() - start_time:.1f} secondes.")
 
-    joblib.dump(logreg_pseudo, 'ressource/results/pseudo_logreg_model.pkl')
+    joblib.dump(logreg_pseudo, output / 'pseudo_logreg_model.pkl')
 
     print("\n--- Évaluation finale sur le set de Test ---")
-    
+
     Y_test_proba_pseudo = logreg_pseudo.predict_proba(X_test)
     Y_test_pred_pseudo = (Y_test_proba_pseudo > 0.5).astype(int)
 
@@ -154,10 +152,10 @@ def main():
     plot_pr_comparison(Y_test, Y_test_proba_logreg, Y_test_proba_pseudo, nom_modele)
 
     print("Préparation des données pour l'UMAP...")
-    
+
     f1_scores_base = f1_score(Y_test, Y_test_pred_logreg, average=None)
     pire_espece_idx = np.argmin(f1_scores_base)
-    
+
     mask_true = Y_train_merge[:, pire_espece_idx] == 1
     X_true_umap = X_train_merge[mask_true]
 
@@ -165,7 +163,7 @@ def main():
     X_pseudo_umap = X_pseudo_confident[mask_pseudo]
 
     mask_noise = Y_train_merge[:, pire_espece_idx] == 0
-    X_noise_umap = X_train_merge[mask_noise][:1000] 
+    X_noise_umap = X_train_merge[mask_noise][:1000]
 
     if len(X_pseudo_umap) > 0 and len(X_true_umap) > 0:
         print(f"Génération de l'UMAP pour l'espèce n°{pire_espece_idx}...")
@@ -191,6 +189,6 @@ def main():
 
     score_knn = f1_score(Y_test, Y_test_pred_knn, average='macro')
     print(f"Score F1 KNN (Few-Shot) : {score_knn:.4f}")'''
-    
+
 if __name__ == "__main__":
     main()

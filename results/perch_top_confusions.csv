@@ -1,0 +1,13 @@
+true_label,predicted_label,true_name,predicted_name,count
+grfdov1,whtdov,Grey-fronted Dove,White-tipped Dove,6
+compau,brnowl,Pauraque,American Barn Owl,4
+compau,compot1,Pauraque,Common Potoo,4
+fusfly1,eulfly1,Fuscous Flycatcher,Euler's Flycatcher,4
+oliwoo1,yeofly1,Olivaceous Woodcreeper,Yellow-olive Flatbill,4
+socfly1,grekis,Social Flycatcher,Great Kiskadee,4
+strcuc1,rubthr1,Striped Cuckoo,Rufous-bellied Thrush,4
+bobfly1,socfly1,Boat-billed Flycatcher,Social Flycatcher,3
+compot1,compau,Common Potoo,Pauraque,3
+compot1,rubthr1,Common Potoo,Rufous-bellied Thrush,3
+grhtan1,banana,Grey-headed Tanager,Bananaquit,3
+houspa,brnowl,House Sparrow,American Barn Owl,3

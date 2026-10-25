@@ -2,12 +2,37 @@
 __pycache__/
 *.pyc
 .env
+.env.*
+!.env.example
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+.uv-cache/
+results/runs/
+
+# Local archives, trained artifacts and credentials (tracked history is retained)
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.joblib
+*.pkl
+*.npy
+*.npz
+*.pt
+*.pth
+*.keras
+*.h5
+kaggle.json
 
 # Dataset / raw audio
 birdclef-2026.zip
 train_audio/
 test_audio/
 train_soundscapes/
+test_soundscapes/*.ogg
 *.ogg
 *.wav
 *.mp3
@@ -15,3 +40,20 @@ train_soundscapes/
 # Local plotting cache
 .matplotlib/
 results/matplotlib_cache*/
+
+# Generated embeddings
+ressource/processed_data/
+ressource/processed_data*/
+ressource/raw_data/train_audio/
+ressource/raw_data/train_soundscapes/
+ressource/raw_data/test_soundscapes/
+ressource/results/benchmark_mfcc/
+
+# Generated feature exports
+ressource/features/all_5s_features*.csv
+ressource/features/benchmark_*.csv
+ressource/features/script_test_*.csv
+ressource/features/log_test.*
+ressource/features/*.log
+ressource/features/*.err
+ressource/features/soundscape_5s_features*.csv
