@@ -1,12 +1,20 @@
+import argparse
 from pathlib import Path
+import sys
 
 import librosa
 import numpy as np
 import pandas as pd
 
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
-SPLIT_CSV = Path("splits/audio_split_65_15_20.csv")
-OUTPUT_CSV = Path("ressource/features/features.csv")
+from project_paths import FEATURES_DIR, SPLITS_DIR, project_path
+
+
+SPLIT_CSV = SPLITS_DIR / "audio_split_65_15_20.csv"
+OUTPUT_CSV = FEATURES_DIR / "features.csv"
 
 SAMPLE_RATE = 32000
 
@@ -15,11 +23,13 @@ LIMIT = None
 
 
 def add_mean_std(features, name, values):
+    """Add population mean/std summaries of a frame-level acoustic descriptor."""
     features[f"{name}_mean"] = np.mean(values)
     features[f"{name}_std"] = np.std(values)
 
 
 def extract_features(audio_path):
+    """Load mono 32 kHz audio and return duration plus ten acoustic summaries."""
     signal, sample_rate = librosa.load(audio_path, sr=SAMPLE_RATE, mono=True)
 
     features = {}
@@ -41,15 +51,23 @@ def extract_features(audio_path):
 
 
 def main():
-    split_df = pd.read_csv(SPLIT_CSV)
+    parser = argparse.ArgumentParser(description="Extract whole-recording acoustic features at 32 kHz.")
+    parser.add_argument("--split", default=str(SPLIT_CSV), help="Recording split CSV.")
+    parser.add_argument("--output", default=str(OUTPUT_CSV), help="Output feature CSV.")
+    parser.add_argument("--limit", type=int, default=LIMIT, help="Process only the first N manifest rows.")
+    args = parser.parse_args()
+    output_path = project_path(args.output)
+    split_df = pd.read_csv(project_path(args.split))
 
-    if LIMIT is not None:
-        split_df = split_df.head(LIMIT)
+    if args.limit is not None:
+        if args.limit <= 0:
+            parser.error("--limit must be positive")
+        split_df = split_df.head(args.limit)
 
     rows = []
 
     for index, audio in split_df.iterrows():
-        audio_path = Path(audio["filepath"])
+        audio_path = project_path(audio["filepath"])
         audio_features = extract_features(audio_path)
 
         row = {
@@ -68,10 +86,10 @@ def main():
 
     features_df = pd.DataFrame(rows)
 
-    OUTPUT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    features_df.to_csv(OUTPUT_CSV, index=False)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    features_df.to_csv(output_path, index=False)
 
-    print(f"Fichier cree : {OUTPUT_CSV}")
+    print(f"Fichier cree : {output_path}")
     print(f"Nombre d'audios : {len(features_df)}")
     print(f"Nombre de features audio : {len(features_df.columns) - 6}")
 

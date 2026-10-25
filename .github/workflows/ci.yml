@@ -1,0 +1,27 @@
+name: Code and tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.9.27"
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync --locked --group dev
+      - run: uv run --locked ruff check scripts tests main.py
+      - run: uv run --locked pytest
+      - name: Validate archived result consistency
+        run: uv run --locked python scripts/summarize_results.py --output-dir results/runs/ci-report

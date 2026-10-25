@@ -3,11 +3,19 @@ from __future__ import annotations
 import argparse
 import random
 from pathlib import Path
+import sys
 
 import pandas as pd
 
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from project_paths import PROJECT_ROOT, project_path
+
 
 def read_classes(path):
+    """Read nonempty species identifiers from a UTF-8 text file."""
     return [
         line.strip()
         for line in path.read_text(encoding="utf-8").splitlines()
@@ -16,6 +24,11 @@ def read_classes(path):
 
 
 def assign_splits(files, seed):
+    """Shuffle a stable file list into rounded per-class 65/15/20 partitions.
+
+    This preserves the historical recording-level protocol. Callers must group
+    source duplicates before using this split for an independent benchmark.
+    """
     shuffled_files = files[:]
     random.Random(seed).shuffle(shuffled_files)
 
@@ -42,11 +55,11 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible splits.")
     args = parser.parse_args()
 
-    project_dir = Path.cwd()
-    classes_path = project_dir / args.classes
-    metadata_path = project_dir / args.metadata
-    audio_dir = project_dir / args.audio_dir
-    output_path = project_dir / args.output
+    project_dir = PROJECT_ROOT
+    classes_path = project_path(args.classes)
+    metadata_path = project_path(args.metadata)
+    audio_dir = project_path(args.audio_dir)
+    output_path = project_path(args.output)
 
     selected_labels = read_classes(classes_path)
     metadata = pd.read_csv(metadata_path).set_index("primary_label")

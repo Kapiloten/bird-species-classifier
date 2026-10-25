@@ -1,22 +1,43 @@
+import argparse
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent.parent))
-import pandas as pd
-from sklearn.ensemble import RandomForestClassifier, StackingClassifier
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.pipeline import make_pipeline
-from scripts.utils import load_data, save_results
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
-from lightgbm import LGBMClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import VotingClassifier
+from project_paths import PROCESSED_DATA_DIR, project_path
+from utils import load_data, save_results
 
+
+DEFAULT_OUTPUT_DIR = project_path("results/runs/perch_soft_voting_corrected")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train a soft-voting classifier on Perch embeddings.")
+    parser.add_argument("--embeddings-dir", default=str(PROCESSED_DATA_DIR))
+    parser.add_argument("--seed", type=int, default=12, help="Seed for splitting and train-only augmentation.")
+    parser.add_argument("--min-originals", type=int, default=5, help="Minimum original recordings per class.")
+    parser.add_argument(
+        "--output-dir",
+        default=str(DEFAULT_OUTPUT_DIR),
+        help="Directory where metrics and reports are saved.",
+    )
+    return parser.parse_args()
 
 
 def main():
-    x_train, y_train, x_val, y_val, x_test, y_test = load_data()
+    args = parse_args()
+    x_train, y_train, x_val, y_val, x_test, y_test = load_data(
+        args.embeddings_dir, random_state=args.seed, min_originals=args.min_originals
+    )
 
     #print("Logistic Regression algorithm: ")
     logit = make_pipeline(
@@ -27,7 +48,6 @@ def main():
             C=1.0,  
             class_weight="balanced",
             random_state=15,
-            n_jobs=-1
         )
     )
     '''logit.fit(x_train, y_train)
@@ -83,7 +103,7 @@ def main():
     svm = make_pipeline(
         SimpleImputer(strategy="median"),
         StandardScaler(),
-        SVC(kernel="rbf", C=10.0, gamma="scale", class_weight="balanced", probability=True),
+        SVC(kernel="rbf", C=10.0, gamma="scale", class_weight="balanced", probability=True, random_state=15),
     )
 
     '''svm.fit(x_train, y_train)
@@ -160,7 +180,24 @@ def main():
     print(f"Validation F1 macro : {val_f1:.4f}")
     print(f"Test accuracy       : {test_accuracy:.4f}")
     print(f"Test F1 macro       : {test_f1:.4f}")
-    save_results("Soft voting model (rf + svm + logit)","ressource/results/ml_classic/perch_embedding/soft_voting",y_test, test_predictions, test_accuracy, test_f1)
+    save_results(
+        "Soft voting model (rf + svm + logit)",
+        project_path(args.output_dir),
+        y_test,
+        test_predictions,
+        test_accuracy,
+        test_f1,
+        configuration={
+            "protocol": "original-recording-split-then-training-augmentation-v1",
+            "split_seed": args.seed, "min_originals": args.min_originals,
+            "estimator_seed": 15, "weights": [1, 2, 3],
+            "n_train_after_augmentation": len(y_train), "n_val": len(y_val), "n_test": len(y_test),
+            "n_classes": len(set(y_train)),
+            "validation_accuracy": val_accuracy, "validation_f1_macro": val_f1,
+            "input_files": [str(project_path(args.embeddings_dir) / name)
+                            for name in ("X_embeddings_perch.npy", "y_labels.npy")],
+        },
+    )
 
 
 
