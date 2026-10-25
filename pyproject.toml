@@ -5,6 +5,7 @@ description = "BirdCLEF audio classification with acoustic features, Perch embed
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "joblib>=1.5.2",
     "librosa>=0.11.0",
     "matplotlib>=3.10.9",
     "numpy>=2.4.4",
@@ -16,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 notebooks = ["jupyter>=1.1.1"]
+plots = ["seaborn>=0.13.2", "umap-learn>=0.5.7"]
 perch = [
     "tensorflow>=2.21,<2.22; python_version < '3.14'",
     "tensorflow-hub>=0.16.1; python_version < '3.14'",

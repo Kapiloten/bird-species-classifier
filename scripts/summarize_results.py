@@ -19,7 +19,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from evaluation import duplicate_feature_rows, metrics_from_confusion
 from project_paths import PROJECT_ROOT, project_path
-from utils import merge_manual_features
+from single_label import merge_manual_features
 
 
 def markdown_table(frame):
@@ -152,7 +152,7 @@ def create_figures(output, summary, per_class, matrices, names, pairs):
 def generate_report(root, output):
     """Write exact tables, four figures, duplicate diagnostics and input hashes."""
     summary, per_class, matrices, inputs = collect_results(root)
-    taxonomy_path = root / "taxonomy.csv"
+    taxonomy_path = root / "ressource/raw_data/taxonomy.csv"
     taxonomy = pd.read_csv(taxonomy_path, dtype={"primary_label": str})
     names = taxonomy.set_index("primary_label").common_name.to_dict()
     inputs.add(taxonomy_path)

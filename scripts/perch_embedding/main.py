@@ -1,206 +1,194 @@
-import argparse
 import sys
 from pathlib import Path
+import time
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[1]
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
-
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier
-from sklearn.impute import SimpleImputer
-from sklearn.metrics import accuracy_score, f1_score
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
+import numpy as np
+from sklearn.model_selection import GridSearchCV
+from sklearn.multiclass import OneVsRestClassifier
+sys.path.append(str(Path(__file__).parent.parent.parent))
+from sklearn.metrics import f1_score
+from scripts.utils import load_data, plot_pr_comparison, plot_pr_curve, plot_pseudo_label_tradeoff, plot_top_flop_f1, plot_umap_projection, plot_worst_confusion
 from sklearn.linear_model import LogisticRegression
-from project_paths import PROCESSED_DATA_DIR, project_path
-from utils import load_data, save_results
+import joblib
 
 
-DEFAULT_OUTPUT_DIR = project_path("results/runs/perch_soft_voting_corrected")
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Train a soft-voting classifier on Perch embeddings.")
-    parser.add_argument("--embeddings-dir", default=str(PROCESSED_DATA_DIR))
-    parser.add_argument("--seed", type=int, default=12, help="Seed for splitting and train-only augmentation.")
-    parser.add_argument("--min-originals", type=int, default=5, help="Minimum original recordings per class.")
-    parser.add_argument(
-        "--output-dir",
-        default=str(DEFAULT_OUTPUT_DIR),
-        help="Directory where metrics and reports are saved.",
-    )
-    return parser.parse_args()
 
 
 def main():
-    args = parse_args()
-    x_train, y_train, x_val, y_val, x_test, y_test = load_data(
-        args.embeddings_dir, random_state=args.seed, min_originals=args.min_originals
+    import argparse
+    from scripts.project_paths import project_path
+    parser = argparse.ArgumentParser(description="Grouped multi-label Perch logistic regression and pseudo-labeling.")
+    parser.add_argument("--embeddings-dir", default="ressource/processed_data4")
+    parser.add_argument("--output-dir", default="ressource/results")
+    args = parser.parse_args()
+    output = project_path(args.output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    X_train, Y_train, X_val, Y_val, X_test, Y_test, X_nLabeled, Y_nLabeled, Z_nLabeled = load_data(args.embeddings_dir)
+    grid_logreg = {
+        'estimator__C': [0.001, 0.01, 0.1, 1.0, 10.0]
+    }
+    model_logreg = GridSearchCV(
+        OneVsRestClassifier(LogisticRegression(class_weight='balanced', max_iter=1000)),
+        param_grid=grid_logreg,
+        cv=3,
+        scoring='f1_macro'
     )
+    model_logreg.fit(X_train, Y_train)
+    print(f"\n Best hyperparam : {model_logreg.best_params_}")
 
-    #print("Logistic Regression algorithm: ")
-    logit = make_pipeline(
-        SimpleImputer(strategy="median"),
+
+    '''grid_svm_rbf = {
+        'estimator__svc__C': [0.001,1.0, 10.0],
+        'estimator__svc__gamma': ['scale', 'auto']
+    }
+
+    svm_pipeline = make_pipeline(
         StandardScaler(),
-        LogisticRegression(
-            max_iter=1000,     
-            C=1.0,  
-            class_weight="balanced",
-            random_state=15,
-        )
-    )
-    '''logit.fit(x_train, y_train)
-
-    val_predictions = logit.predict(x_val)
-    test_predictions = logit.predict(x_test)
-
-    val_accuracy = accuracy_score(y_val, val_predictions)
-    val_f1 = f1_score(y_val, val_predictions, average="macro")
-    test_accuracy = accuracy_score(y_test, test_predictions)
-    test_f1 = f1_score(y_test, test_predictions, average="macro")
-
-    print(f"Validation accuracy : {val_accuracy:.4f}")
-    print(f"Validation F1 macro : {val_f1:.4f}")
-    print(f"Test accuracy       : {test_accuracy:.4f}")
-    print(f"Test F1 macro       : {test_f1:.4f}")
-
-    save_results("Logistic Regression","ressource/results/ml_classic/perch_embedding/log_reg",y_test, test_predictions, test_accuracy, test_f1)'''
-    
-
-    #bagging + random embed
-    #print("Random Forest algorithm: ")
-    rf = make_pipeline(
-        SimpleImputer(strategy="median"),
-        RandomForestClassifier(
-            n_estimators=200,
-            class_weight="balanced",
-            random_state=15,
-            n_jobs=-1,
-        ),
+        SVC(kernel='rbf', class_weight='balanced', max_iter=2000)
     )
 
-    '''rf.fit(x_train, y_train)
-    
-    val_predictions = rf.predict(x_val)
-    test_predictions = rf.predict(x_test)
-
-    val_accuracy = accuracy_score(y_val, val_predictions)
-    val_f1 = f1_score(y_val, val_predictions, average="macro")
-    test_accuracy = accuracy_score(y_test, test_predictions)
-    test_f1 = f1_score(y_test, test_predictions, average="macro")
-
-    print(f"Validation accuracy : {val_accuracy:.4f}")
-    print(f"Validation F1 macro : {val_f1:.4f}")
-    print(f"Test accuracy       : {test_accuracy:.4f}")
-    print(f"Test F1 macro       : {test_f1:.4f}")
-
-    save_results("Random Forest","ressource/results/ml_classic/perch_embedding/random_forest",y_test, test_predictions, test_accuracy, test_f1)'''
-
-
-    #svm with gaussian kernel
-    #print("SVM RBF algorithm: ")
-    svm = make_pipeline(
-        SimpleImputer(strategy="median"),
-        StandardScaler(),
-        SVC(kernel="rbf", C=10.0, gamma="scale", class_weight="balanced", probability=True, random_state=15),
+    model_svm = GridSearchCV(
+        OneVsRestClassifier(svm_pipeline),
+        param_grid=grid_svm_rbf,
+        cv=3,
+        scoring='f1_macro',
+        n_jobs=-1
     )
 
-    '''svm.fit(x_train, y_train)
+    model_svm.fit(X_train, Y_train)
+    print(model_svm.best_params_)'''
 
-    val_predictions = svm.predict(x_val)
-    test_predictions = svm.predict(x_test)
+    Y_val_pred_logreg = (model_logreg.best_estimator_.predict_proba(X_val) > 0.5).astype(int)
+    score_logreg = f1_score(Y_val, Y_val_pred_logreg, average='macro')
 
-    val_accuracy = accuracy_score(y_val, val_predictions)
-    val_f1 = f1_score(y_val, val_predictions, average="macro")
-    test_accuracy = accuracy_score(y_test, test_predictions)
-    test_f1 = f1_score(y_test, test_predictions, average="macro")
+    '''Y_val_pred_svm = (model_svm.best_estimator_.decision_function(X_val) > 0).astype(int)
+    score_svm = f1_score(Y_val, Y_val_pred_svm, average='macro')'''
 
-    print(f"Validation accuracy : {val_accuracy:.4f}")
-    print(f"Validation F1 macro : {val_f1:.4f}")
-    print(f"Test accuracy       : {test_accuracy:.4f}")
-    print(f"Test F1 macro       : {test_f1:.4f}")
+    print(f"Final score LogReg : {score_logreg:.4f}")
+    #print(f"Final score SVM: {score_svm:.4f}")
+    #plot_model_comparison(score_logreg, score_svm)
 
-    save_results("SVM RBF","ressource/results/ml_classic/perch_embedding/svm",y_test, test_predictions, test_accuracy, test_f1)'''
 
-    '''#boosting
-    print("Light GBM: ")
-    gbm = make_pipeline(
-        SimpleImputer(strategy="median"),
-        LGBMClassifier(
-            n_estimators=150,
-            learning_rate=0.3, 
-            class_weight="balanced",
-            reg_alpha=0.1,        
-            reg_lambda=0.1,
-            random_state=15,
-            n_jobs=-1,
-            verbose=-1
-        )
+
+    print("\n--- Entraînement final sur Train + Val ---")
+    X_train_merge = np.concatenate((X_train, X_val))
+    Y_train_merge = np.concatenate((Y_train, Y_val))
+
+
+    print("Entraînement LogReg Final...")
+    final_logreg = OneVsRestClassifier(LogisticRegression(C=0.001, class_weight='balanced', max_iter=1000), n_jobs=-1)
+    final_logreg.fit(X_train_merge, Y_train_merge)
+
+    joblib.dump(final_logreg, output / 'final_logreg_model.pkl')
+
+
+    print("\n--- Prédictions sur le set de Test ---")
+
+    Y_test_proba_logreg = final_logreg.predict_proba(X_test)
+    Y_test_pred_logreg = (Y_test_proba_logreg > 0.5).astype(int)
+
+
+    score_logreg = f1_score(Y_test, Y_test_pred_logreg, average='macro')
+    print(f"Final score LogReg : {score_logreg:.4f}")
+
+
+
+    print("\n--- Génération des graphiques LogReg ---")
+    nom_logreg = "LogReg_Perch"
+
+
+    plot_pr_curve(Y_test, Y_test_proba_logreg, nom_logreg)
+    plot_top_flop_f1(Y_test, Y_test_pred_logreg, nom_logreg)
+    plot_worst_confusion(Y_test, Y_test_pred_logreg, nom_logreg)
+
+
+
+    print("\n--- Début du Pseudo-Labeling ---")
+
+    print("Prédiction sur les données non étiquetées...")
+    proba_unlabeled = final_logreg.predict_proba(X_nLabeled)
+
+    seuil_confiance = 0.9
+
+    Y_pseudo = (proba_unlabeled >= seuil_confiance).astype(int)
+
+
+    mask_confident = Y_pseudo.sum(axis=1) > 0
+    X_pseudo_confident = X_nLabeled[mask_confident]
+    Y_pseudo_confident = Y_pseudo[mask_confident]
+
+    print(f"Nombre de nouveaux extraits d'oiseaux ajoutés : {len(X_pseudo_confident)}")
+
+    X_train_augmented = np.concatenate((X_train_merge, X_pseudo_confident))
+    Y_train_augmented = np.concatenate((Y_train_merge, Y_pseudo_confident))
+
+    print("\n--- Entraînement du modèle augmenté ---")
+    logreg_pseudo = OneVsRestClassifier(LogisticRegression(C=0.001, class_weight='balanced', max_iter=1000), n_jobs=4)
+
+    start_time = time.time()
+    logreg_pseudo.fit(X_train_augmented, Y_train_augmented)
+
+    print(f"Modèle augmenté entraîné en {time.time() - start_time:.1f} secondes.")
+
+    joblib.dump(logreg_pseudo, output / 'pseudo_logreg_model.pkl')
+
+    print("\n--- Évaluation finale sur le set de Test ---")
+
+    Y_test_proba_pseudo = logreg_pseudo.predict_proba(X_test)
+    Y_test_pred_pseudo = (Y_test_proba_pseudo > 0.5).astype(int)
+
+    score_pseudo = f1_score(Y_test, Y_test_pred_pseudo, average='macro')
+    print(f"Score F1 AVANT Pseudo-Labeling : {score_logreg:.4f}")
+    print(f"Score F1 APRES Pseudo-Labeling : {score_pseudo:.4f}")
+
+
+    print("\n--- Génération des graphiques de Pseudo-Labeling ---")
+    nom_modele = "LogReg_Perch"
+
+    print("Génération du graphe de compromis (Tradeoff)...")
+    plot_pseudo_label_tradeoff(Y_test, Y_test_proba_logreg, nom_modele)
+
+    print("Génération du graphe de comparaison PR...")
+    plot_pr_comparison(Y_test, Y_test_proba_logreg, Y_test_proba_pseudo, nom_modele)
+
+    print("Préparation des données pour l'UMAP...")
+
+    f1_scores_base = f1_score(Y_test, Y_test_pred_logreg, average=None)
+    pire_espece_idx = np.argmin(f1_scores_base)
+
+    mask_true = Y_train_merge[:, pire_espece_idx] == 1
+    X_true_umap = X_train_merge[mask_true]
+
+    mask_pseudo = Y_pseudo_confident[:, pire_espece_idx] == 1
+    X_pseudo_umap = X_pseudo_confident[mask_pseudo]
+
+    mask_noise = Y_train_merge[:, pire_espece_idx] == 0
+    X_noise_umap = X_train_merge[mask_noise][:1000]
+
+    if len(X_pseudo_umap) > 0 and len(X_true_umap) > 0:
+        print(f"Génération de l'UMAP pour l'espèce n°{pire_espece_idx}...")
+        plot_umap_projection(X_true_umap, X_pseudo_umap, X_noise_umap)
+    else:
+        print(f"Impossible de faire l'UMAP : pas assez de vrais/faux labels pour l'espèce {pire_espece_idx}.")
+
+
+    '''print("\n--- Évaluation avec KNN (Recherche par similarité) ---")
+    knn_model = OneVsRestClassifier(
+        KNeighborsClassifier(n_neighbors=3, algorithm='brute', metric='cosine', n_jobs=-1)
     )
-    gbm.fit(x_train, y_train)
 
-    val_predictions = gbm.predict(x_val)
-    test_predictions = gbm.predict(x_test)
+    start_time = time.time()
+    knn_model.fit(X_train_merge, Y_train_merge)
+    print(f"Mémorisation terminée en {time.time() - start_time:.2f} secondes.")
 
-    val_accuracy = accuracy_score(y_val, val_predictions)
-    val_f1 = f1_score(y_val, val_predictions, average="macro")
-    test_accuracy = accuracy_score(y_test, test_predictions)
-    test_f1 = f1_score(y_test, test_predictions, average="macro")
+    start_time = time.time()
+    Y_test_proba_knn = knn_model.predict_proba(X_test)
+    print(f"Prédictions terminées en {(time.time() - start_time) / 60:.1f} minutes.")
 
-    print(f"Validation accuracy : {val_accuracy:.4f}")
-    print(f"Validation F1 macro : {val_f1:.4f}")
-    print(f"Test accuracy       : {test_accuracy:.4f}")
-    print(f"Test F1 macro       : {test_f1:.4f}")
+    Y_test_pred_knn = (Y_test_proba_knn > 0.5).astype(int)
 
-    save_results("Light GBM","ressource/results/ml_classic/perch_embedding/light_gbm",y_test, test_predictions, test_accuracy, test_f1)'''
+    score_knn = f1_score(Y_test, Y_test_pred_knn, average='macro')
+    print(f"Score F1 KNN (Few-Shot) : {score_knn:.4f}")'''
 
-    print("Soft voting using rf, svm and logit: ")
-    soft_voting = VotingClassifier(
-        estimators=[
-            ('rf', rf), 
-            ('svm', svm), 
-            ('logit', logit),
-        ],
-        voting='soft',
-        weights=[1, 2, 3]
-    )
-
-    soft_voting.fit(x_train, y_train)
-
-    val_predictions = soft_voting.predict(x_val)
-    test_predictions = soft_voting.predict(x_test)
-
-    val_accuracy = accuracy_score(y_val, val_predictions)
-    val_f1 = f1_score(y_val, val_predictions, average="macro")
-    test_accuracy = accuracy_score(y_test, test_predictions)
-    test_f1 = f1_score(y_test, test_predictions, average="macro")
-
-    print(f"Validation accuracy : {val_accuracy:.4f}")
-    print(f"Validation F1 macro : {val_f1:.4f}")
-    print(f"Test accuracy       : {test_accuracy:.4f}")
-    print(f"Test F1 macro       : {test_f1:.4f}")
-    save_results(
-        "Soft voting model (rf + svm + logit)",
-        project_path(args.output_dir),
-        y_test,
-        test_predictions,
-        test_accuracy,
-        test_f1,
-        configuration={
-            "protocol": "original-recording-split-then-training-augmentation-v1",
-            "split_seed": args.seed, "min_originals": args.min_originals,
-            "estimator_seed": 15, "weights": [1, 2, 3],
-            "n_train_after_augmentation": len(y_train), "n_val": len(y_val), "n_test": len(y_test),
-            "n_classes": len(set(y_train)),
-            "validation_accuracy": val_accuracy, "validation_f1_macro": val_f1,
-            "input_files": [str(project_path(args.embeddings_dir) / name)
-                            for name in ("X_embeddings_perch.npy", "y_labels.npy")],
-        },
-    )
-
-
-
-    
 if __name__ == "__main__":
     main()

@@ -1,249 +1,393 @@
-"""Data loading and result exports shared by the classical classifiers."""
 
-import hashlib
-import json
-import platform
-import warnings
-from importlib.metadata import version
-
-import pandas as pd
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 import numpy as np
-from sklearn.model_selection import train_test_split
-
-try:
-    from scripts.project_paths import FEATURES_DIR, PROCESSED_DATA_DIR, project_path
-except ModuleNotFoundError:
-    from project_paths import FEATURES_DIR, PROCESSED_DATA_DIR, project_path
+import pandas as pd
+from sklearn.metrics import f1_score, confusion_matrix,precision_recall_curve, average_precision_score, precision_score
+import matplotlib.pyplot as plt
 
 
-META_COLUMNS = ["filepath", "filename", "label", "common_name", "scientific_name", "split"]
+from scripts.project_paths import RAW_DATA_DIR, project_path
+from scripts.multilabel_data import labels_for_windows, recording_groups, split_grouped_data
+from scripts.single_label import increase_rare_birds as increase_rare_birds
 
 
-def increase_rare_birds(X, y, min_threshold=5, noise=0.02, random_state=12):
-    """Augment rare *training* classes with Gaussian noise, using a local RNG.
+def species_vocabulary(sample_submission=None):
+    """Read the official target order from the project-root-relative metadata."""
+    path = project_path(sample_submission) if sample_submission is not None else RAW_DATA_DIR / "sample_submission.csv"
+    return [str(col).strip() for col in pd.read_csv(path, nrows=0).columns if col != "row_id"]
 
-    Call only after splitting original observations. The noise scale is estimated
-    from this training array, never from validation or test data.
+
+def index_to_labels(index):
+    df_sub = pd.read_csv(RAW_DATA_DIR / "sample_submission.csv")
+    Y = np.load(project_path("ressource/processed_data4/y_labels_train_soundscapes.npy"))
+
+    species = [col for col in df_sub.columns if col != 'row_id']
+    vect = Y[index]
+    indexes = np.where(vect == 1)[0]
+
+    for index in indexes:
+        print(f"{species[index]}")
+
+
+def createLabelsWithCsv(processedData, csvFile, output_path="ressource/processed_data4/y_labels_train_soundscapes.npy", sample_submission=None):
+    """Align annotation targets to extracted row IDs and save them locally."""
+    rows = np.load(project_path(processedData))
+    targets = labels_for_windows(rows, pd.read_csv(project_path(csvFile)), species_vocabulary(sample_submission))
+    output = project_path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    np.save(output, targets)
+    return targets
+
+
+def partition_data(X,Y,Z):
+    '''Separates the data into two subsets: labeled and non labeled.\n
+       Return: A 6 tuple (X_labeled, Y_labeled, Z_labeled, X_non_labled, Y_non_lableled, Z_non_labeled)
+    '''
+    mask_labels = Y.sum(axis=1) >= 1
+
+    mask_no_label = ~mask_labels
+
+    X_labeled = X[mask_labels]
+    Y_labeled = Y[mask_labels]
+    Z_labeled = Z[mask_labels]
+
+    X_non_labeled = X[mask_no_label]
+    Y_non_labeled = Y[mask_no_label]
+    Z_non_labeled = Z[mask_no_label]
+
+    return X_labeled, Y_labeled, Z_labeled, X_non_labeled, Y_non_labeled, Z_non_labeled
+
+def mono_label_to_multi(Y_mono, sample_submission=None):
+    """Encode primary labels in the official multi-label target order."""
+    columns = species_vocabulary(sample_submission)
+    return pd.get_dummies(pd.Series(Y_mono), dtype=int).reindex(columns=columns, fill_value=0).to_numpy()
+
+
+def load_data(base_path="ressource/processed_data4", raw_data_dir=None):
+    """Load per-window Perch arrays, align soundscape labels and split recording groups.
+
+    Returns nine arrays: train X/y, validation X/y, test X/y, and the unlabeled
+    pseudo-label pool X/y/groups. Held-out recording groups never enter that pool.
     """
-    rng = np.random.default_rng(random_state)
-    classes, counts = np.unique(y, return_counts=True)
-    rare_birds = classes[counts < min_threshold]
-    
-    if len(rare_birds) == 0:
-        return X, y
-            
-    new_X = []
-    new_y = []
-    
-    global_std = np.std(X)
-    noise_calc = global_std * noise
+    base_path = project_path(base_path)
+    raw = project_path(raw_data_dir) if raw_data_dir is not None else RAW_DATA_DIR
+    targets = createLabelsWithCsv(base_path / "row_ids_train_soundscapes.npy",
+                                  raw / "train_soundscapes_labels.csv",
+                                  output_path=base_path / "y_labels_train_soundscapes.npy",
+                                  sample_submission=raw / "sample_submission.csv")
+    X_audio = np.load(base_path / "X_embeddings_perch_train_audio.npy")
+    Y_audio = mono_label_to_multi(np.load(base_path / "y_labels_train_audio.npy"), raw / "sample_submission.csv")
+    Z_audio = recording_groups(np.load(base_path / "row_ids_train_audio.npy"), window_ids=True)
+    X_sound = np.load(base_path / "X_embeddings_perch_train_soundscapes.npy")
+    Z_sound = recording_groups(np.load(base_path / "row_ids_train_soundscapes.npy"), window_ids=True)
+    X_lab, Y_lab, Z_lab, X_unlab, Y_unlab, Z_unlab = partition_data(X_sound, targets, Z_sound)
+    return split_grouped_data(np.concatenate((X_audio, X_lab)), np.concatenate((Y_audio, Y_lab)),
+                              np.concatenate((Z_audio, Z_lab)), X_unlab, Y_unlab, Z_unlab)
 
-    for bird in rare_birds:
-        existing_birds = X[y == bird]
-        nb_existing = len(existing_birds)
-        
-        nb_needed = min_threshold - nb_existing
-        
-        for _ in range(nb_needed):
-            base_vect = existing_birds[rng.integers(0, nb_existing)]
-            
-            noise_vect = rng.normal(loc=0.0, scale=noise_calc, size=base_vect.shape)
-            
-            mutant = base_vect + noise_vect
-            
-            new_X.append(mutant)
-            new_y.append(bird)
-            
-    X_final = np.vstack([X, np.array(new_X)])
-    y_final = np.concatenate([y, np.array(new_y)])
-        
-    return X_final, y_final
 
-def split_embeddings(X, y, random_state=12, min_originals=5):
-    """Split original Perch observations 65/15/20, then augment training only.
+def load_csv_features(features_csv="ressource/features/all_5s_features.csv", labels_csv="ressource/raw_data/train_soundscapes_labels.csv", sample_submission=None):
+    """Load the upstream five-second MFCC table and split by original recording.
 
-    Labels with fewer than ``min_originals`` original recordings are excluded
-    explicitly: synthetic siblings cannot serve as independent test observations.
-    This is a recording-level protocol; it does not establish site independence.
+    The window-table schema differs from the historical whole-recording CSVs.
+    Duration is retained as metadata, following the existing multi-label workflow.
     """
-    X, y = np.asarray(X), np.asarray(y)
-    if X.ndim != 2 or y.ndim != 1 or len(X) != len(y):
-        raise ValueError("Expected a 2-D embedding array and one label per row.")
-    if min_originals < 5:
-        raise ValueError("min_originals must be at least five for the three-way split.")
-    if not np.isfinite(X).all() or pd.isna(y).any():
-        raise ValueError("Embeddings and labels must not contain non-finite/missing values.")
-    classes, counts = np.unique(y, return_counts=True)
-    excluded = classes[counts < min_originals]
-    if len(excluded):
-        warnings.warn(
-            "Excluded classes with too few original recordings: " + ", ".join(map(str, excluded)),
-            UserWarning,
-            stacklevel=2,
-        )
-    keep = ~np.isin(y, excluded)
-    X, y = X[keep], y[keep]
-    if len(np.unique(y)) < 2:
-        raise ValueError("At least two eligible classes are required; collect more originals.")
-    X_temp, X_test, y_temp, y_test = train_test_split(
-        X, y, test_size=0.20, stratify=y, random_state=random_state
+    frame = pd.read_csv(project_path(features_csv))
+    metadata = {"row_id", "source", "filepath", "filename", "start", "end", "start_seconds", "end_seconds", "duration"}
+    features = [col for col in frame if col not in metadata]
+    audio, sound = frame[frame.source == "train_audio"], frame[frame.source == "train_soundscapes"]
+    labels = audio.filepath.map(lambda path: str(path).replace("\\", "/").split("/")[-2]).to_numpy()
+    Y_audio = mono_label_to_multi(labels, sample_submission)
+    Z_audio = recording_groups(audio.filename)
+    Y_sound = labels_for_windows(sound.row_id, pd.read_csv(project_path(labels_csv)), species_vocabulary(sample_submission))
+    Z_sound = recording_groups(sound.filename)
+    X_lab, Y_lab, Z_lab, X_unlab, Y_unlab, Z_unlab = partition_data(sound[features].to_numpy(), Y_sound, Z_sound)
+    return split_grouped_data(np.concatenate((audio[features].to_numpy(), X_lab)), np.concatenate((Y_audio, Y_lab)),
+                              np.concatenate((Z_audio, Z_lab)), X_unlab, Y_unlab, Z_unlab)
+
+
+def _save_figure(path, **kwargs):
+    """Create the requested project-relative figure directory before saving."""
+    target = project_path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(target, **kwargs)
+
+
+def plot_learning_curve(train_sizes, train_scores, val_scores, model_name):
+
+    train_mean = np.mean(train_scores, axis=1)
+    train_std = np.std(train_scores, axis=1)
+    val_mean = np.mean(val_scores, axis=1)
+    val_std = np.std(val_scores, axis=1)
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(train_sizes, train_mean, label="Training score", color="blue", marker='o')
+    plt.fill_between(train_sizes, train_mean - train_std, train_mean + train_std, color="blue", alpha=0.1)
+
+    plt.plot(train_sizes, val_mean, label="Validation score", color="red", marker='s')
+    plt.fill_between(train_sizes, val_mean - val_std, val_mean + val_std, color="red", alpha=0.1)
+
+    plt.title(f"Learning curve for {model_name}", fontsize=14)
+    plt.xlabel("Training sample size")
+    plt.ylabel("F1-Score")
+    plt.legend(loc="lower right")
+    plt.tight_layout()
+    _save_figure(f"ressource/results/ml_classic/learning_curve_{model_name}.png", dpi=300)
+    plt.show()
+
+def plot_pr_curve(Y_true, Y_prob, model_name):
+    precision, recall, _ = precision_recall_curve(Y_true.ravel(), Y_prob.ravel())
+    avg_precision = average_precision_score(Y_true, Y_prob, average="micro")
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(recall, precision, color="purple", lw=2, label=f'Micro-average PR (AP = {avg_precision:.2f})')
+
+    plt.title(f"Precision-Recall for {model_name}", fontsize=14)
+    plt.xlabel("Recall - Birds found")
+    plt.ylabel("Precision")
+    plt.legend(loc="lower left")
+    plt.xlim([0.0, 1.05])
+    plt.ylim([0.0, 1.05])
+    plt.tight_layout()
+    _save_figure(f"ressource/results/ml_classic/pr_curve_{model_name}.png", dpi=300)
+    plt.show()
+
+
+def plot_top_flop_f1(Y_true, Y_pred, model_name):
+    df_sub = pd.read_csv(RAW_DATA_DIR / "sample_submission.csv")
+    species_names = [str(col).strip() for col in df_sub.columns if col != 'row_id']
+    f1_scores = f1_score(Y_true, Y_pred, average=None)
+
+    score_dict = {nom: score for nom, score in zip(species_names, f1_scores)}
+    sorted_scores = sorted(score_dict.items(), key=lambda item: item[1], reverse=True)
+
+    top_5 = sorted_scores[:5]
+    flop_5 = sorted_scores[-5:]
+
+    to_plot = flop_5 + top_5
+    noms = [x[0] for x in to_plot]
+    scores = [x[1] for x in to_plot]
+
+    colors = ['#e74c3c']*5 + ['#2ecc71']*5
+
+    plt.figure(figsize=(10, 7))
+    plt.barh(noms, scores, color=colors)
+    plt.axvline(x=np.mean(f1_scores), color='gray', linestyle='--', label=f'Moyenne globale ({np.mean(f1_scores):.2f})')
+
+    plt.title(f"5 best VS 5 worst for {model_name}", fontsize=14)
+    plt.xlabel("F1-Score")
+    plt.xlim(0, 1)
+    plt.legend()
+    plt.tight_layout()
+    _save_figure(f"ressource/results/ml_classic/top_flop_f1_{model_name}.png", dpi=300)
+    plt.show()
+
+def plot_worst_confusion(Y_true, Y_pred, model_name):
+    import seaborn as sns
+    df_sub = pd.read_csv(RAW_DATA_DIR / "sample_submission.csv")
+    species_names = [str(col).strip() for col in df_sub.columns if col != 'row_id']
+    f1_scores = f1_score(Y_true, Y_pred, average=None)
+    pire_idx = np.argmin(f1_scores)
+    worst_species = species_names[pire_idx]
+
+    cm = confusion_matrix(Y_true[:, pire_idx], Y_pred[:, pire_idx])
+
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Reds', cbar=False,
+                xticklabels=['Missing (Prediction)', 'Present (Prediction)'],
+                yticklabels=['Missing (Truth)', 'Present (Truth)'])
+
+    plt.title(f"Error matrix: {worst_species}\n(Worst species) for {model_name}", fontsize=14)
+    plt.ylabel('Ground Truth')
+    plt.xlabel('Prediction')
+    plt.tight_layout()
+    _save_figure(f"ressource/results/ml_classic/confusion_worst_{model_name}.png", dpi=300)
+    plt.show()
+
+def plot_pseudo_label_tradeoff(Y_true_test, Y_proba_test, model_name):
+
+    y_true_flat = Y_true_test.ravel()
+    y_prob_flat = Y_proba_test.ravel()
+
+    thresholds = np.linspace(0.5, 0.99, 50)
+    precisions = []
+    volumes = []
+
+    for threshold in thresholds:
+        pseudo_labels = (y_prob_flat >= threshold).astype(int)
+
+        volume = np.sum(pseudo_labels)
+        volumes.append(volume)
+
+        if volume > 0:
+            prec = precision_score(y_true_flat, pseudo_labels, zero_division=0)
+        else:
+            prec = 1.0
+        precisions.append(prec)
+
+    plt.style.use('seaborn-v0_8-whitegrid')
+    fig, ax1 = plt.subplots(figsize=(9, 6))
+
+    color = '#2ecc71' # Vert
+    ax1.set_xlabel('Threshold', fontsize=12)
+    ax1.set_ylabel('Precision', color=color, fontsize=12)
+    ax1.plot(thresholds, precisions, color=color, linewidth=3, label="Precision")
+    ax1.tick_params(axis='y', labelcolor=color)
+    ax1.set_ylim([0.0, 1.05])
+
+    ax2 = ax1.twinx()
+    color = '#e74c3c' # Rouge
+    ax2.set_ylabel('Number of pseudo-labels kept', color=color, fontsize=12)
+    ax2.plot(thresholds, volumes, color=color, linewidth=3, linestyle='--', label="Volume")
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    chosen_threshold = 0.90
+    plt.axvline(x=chosen_threshold, color='gray', linestyle=':', linewidth=2)
+    plt.text(chosen_threshold + 0.01, max(volumes)*0.8, f'chosen_threshold : {chosen_threshold}', color='gray', fontsize=11, fontweight='bold')
+
+    plt.title(f"Pseudo labeling justification for {model_name}", fontsize=14)
+    fig.tight_layout()
+    _save_figure(f"ressource/results/ml_classic/pseudo_label_justification_{model_name}.png", dpi=300)
+    plt.show()
+
+
+def plot_umap_features_justification(X_train, Y_train, top_k=5):
+    import umap
+    import seaborn as sns
+    df_sub = pd.read_csv(RAW_DATA_DIR / "sample_submission.csv")
+    species_names = [col for col in df_sub.columns if col != 'row_id']
+
+    class_counts = Y_train.sum(axis=0)
+    top_classes_idx = np.argsort(class_counts)[::-1][:top_k]
+
+    indices_to_plot = []
+    labels_to_plot = []
+
+    for class_idx in top_classes_idx:
+        rows = np.where(Y_train[:, class_idx] == 1)[0]
+        indices_to_plot.extend(rows)
+        name = species_names[class_idx]
+        labels_to_plot.extend([name] * len(rows))
+
+    X_subset = X_train[indices_to_plot]
+
+
+    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='cosine', random_state=15)
+    embedding_2d = reducer.fit_transform(X_subset)
+
+    plt.style.use('seaborn-v0_8-whitegrid')
+    plt.figure(figsize=(10, 8))
+
+    sns.scatterplot(
+        x=embedding_2d[:, 0],
+        y=embedding_2d[:, 1],
+        hue=labels_to_plot,
+        palette="tab10",
+        s=30,
+        alpha=0.7,
+        edgecolor='black',
+        linewidth=0.2
     )
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_temp, y_temp, test_size=0.1875, stratify=y_temp, random_state=random_state
-    )
-    expected = set(y)
-    if any(set(part) != expected for part in (y_train, y_val, y_test)):
-        raise ValueError("Some classes are absent from a partition; increase min_originals.")
-    X_train, y_train = increase_rare_birds(X_train, y_train, random_state=random_state)
-    return X_train, y_train, X_val, y_val, X_test, y_test
+
+    plt.title("Natural separability of species (UMAP on MFCC)", fontsize=15, fontweight='bold')
+    plt.xlabel("Dimension UMAP 1")
+    plt.ylabel("Dimension UMAP 2")
+
+    plt.legend(title="Top species", bbox_to_anchor=(1.05, 1), loc='upper left', frameon=True, shadow=True)
+
+    plt.tight_layout()
+    _save_figure("ressource/results/umap_justification_mfcc.png", dpi=300)
+    print("Graph saved : ressource/results/umap_justification_mfcc.png")
+    plt.show()
 
 
-def load_data(base_path=None, random_state=12, min_originals=5):
-    """Load Perch arrays and apply the corrected train-only augmentation protocol."""
-    base_path = project_path(base_path) if base_path is not None else PROCESSED_DATA_DIR
-    embeddings_path = base_path / "X_embeddings_perch.npy"
-    labels_path = base_path / "y_labels.npy"
+def plot_umap_projection(X_true, X_pseudo, X_noise):
+    import umap
+    X_total = np.vstack((X_true, X_pseudo, X_noise))
 
-    if not embeddings_path.exists() or not labels_path.exists():
-        raise FileNotFoundError(
-            "Perch embeddings are missing. Run "
-            "scripts/perch_embedding/embedding_perch.py first."
-        )
+    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='cosine', random_state=15)
+    embedding_2d = reducer.fit_transform(X_total)
 
-    X = np.load(embeddings_path)
-    Y = np.load(labels_path)
+    len_true = len(X_true)
+    len_pseudo = len(X_pseudo)
 
-    return split_embeddings(X, Y, random_state=random_state, min_originals=min_originals)
+    emb_true = embedding_2d[:len_true]
+    emb_pseudo = embedding_2d[len_true : len_true + len_pseudo]
+    emb_noise = embedding_2d[len_true + len_pseudo:]
 
+    plt.style.use('seaborn-v0_8-whitegrid')
+    plt.figure(figsize=(10, 8))
 
-def merge_manual_features(audio_features, mfcc_features):
-    """Join one row per recording, rejecting missing/mismatched metadata.
+    plt.scatter(emb_noise[:, 0], emb_noise[:, 1], c='#bdc3c7', s=15, alpha=0.5, label="noise")
 
-    Metadata never enters the numeric feature matrix. Identical numeric vectors
-    across partitions trigger a warning; historical observations are kept intact.
-    """
-    for name, frame in (("acoustic", audio_features), ("MFCC", mfcc_features)):
-        missing = set(META_COLUMNS) - set(frame.columns)
-        if missing:
-            raise ValueError(f"{name} table is missing metadata columns: {sorted(missing)}")
-        if frame[META_COLUMNS].isna().any().any():
-            raise ValueError(f"{name} table contains missing metadata.")
-        if frame["filepath"].duplicated().any():
-            raise ValueError(f"{name} table contains duplicate recording paths (possible leakage).")
-        if set(frame["split"]) != {"train", "val", "test"}:
-            raise ValueError(f"{name} table must contain only train, val and test partitions.")
-    overlap = (set(audio_features) & set(mfcc_features)) - set(META_COLUMNS)
-    if overlap:
-        raise ValueError(f"Overlapping feature names: {sorted(overlap)}")
-    data = audio_features.merge(
-        mfcc_features, on=META_COLUMNS, how="outer", validate="one_to_one", indicator=True,
-        sort=False,
-    )
-    if not data["_merge"].eq("both").all():
-        raise ValueError("Feature tables disagree on recordings, labels or split assignments.")
-    # Preserve acoustic-table order, which also matches the committed manifest.
-    data = data.drop(columns="_merge").set_index("filepath").loc[audio_features.filepath].reset_index()
-    columns = [c for c in data if c not in META_COLUMNS]
-    if not columns or not all(pd.api.types.is_numeric_dtype(data[c]) for c in columns):
-        raise ValueError("Feature columns must be numeric and nonempty.")
-    if np.isinf(data[columns].to_numpy()).any():
-        raise ValueError("Infinite feature values are not supported; NaNs can be imputed.")
-    known = set(data.loc[data.split == "train", "label"])
-    if not set(data.label).issubset(known):
-        raise ValueError("Validation/test contains classes absent from training.")
-    duplicates = data[data.duplicated(columns, keep=False)]
-    if not duplicates.empty and duplicates.groupby(columns, dropna=False)["split"].nunique().gt(1).any():
-        warnings.warn(
-            "Identical feature vectors occur across partitions; historical scores may be optimistic. "
-            "Run scripts/summarize_results.py and review results/duplicate_features.csv.",
-            UserWarning,
-            stacklevel=2,
-        )
-    return data, columns
+    plt.scatter(emb_true[:, 0], emb_true[:, 1], c='#3498db', s=40, alpha=0.8, label="True label")
+
+    plt.scatter(emb_pseudo[:, 0], emb_pseudo[:, 1], c='#e74c3c', s=80, marker='X', edgecolors='black', label="Generated pseudo-labem (>0.90)")
+
+    plt.title("UMAP projection (Espèce Ciblée)", fontsize=15, fontweight='bold')
+    plt.xlabel("Dimension UMAP 1")
+    plt.ylabel("Dimension UMAP 2")
+    plt.legend(loc="best", fontsize=11, frameon=True, shadow=True)
+
+    plt.tight_layout()
+    _save_figure("ressource/results/ml_classic/umap_projection.png", dpi=300)
+    plt.show()
 
 
-def load_data2(features_dir=None):
-    """Load the fixed manual split; return X/y for train, validation and test.
-
-    ``features_dir`` is relative to the project root unless absolute. Both CSVs
-    must describe exactly the same recordings. NaNs are left to train-fitted
-    imputers; identity and split inconsistencies fail before any model is fitted.
-    """
-    base_path = project_path(features_dir) if features_dir is not None else FEATURES_DIR
-    audio_features_path = base_path / "features.csv"
-    mfcc_features_path = base_path / "mfcc_features.csv"
-
-    if not audio_features_path.exists() or not mfcc_features_path.exists():
-        raise FileNotFoundError(
-            "Manual feature files are missing. Run "
-            "scripts/manual_embedding/extract_features.py and "
-            "scripts/manual_embedding/extract_mfcc_features.py first."
-        )
-
-    audio_features = pd.read_csv(audio_features_path)
-    mfcc_features = pd.read_csv(mfcc_features_path)
-    data, feature_columns = merge_manual_features(audio_features, mfcc_features)
-
-    train = data[data["split"] == "train"]
-    val = data[data["split"] == "val"]
-    test = data[data["split"] == "test"]
-
-    return (
-        train[feature_columns],
-        train["label"],
-        val[feature_columns],
-        val["label"],
-        test[feature_columns],
-        test["label"],
-    )
+def plot_pr_comparison(Y_test, Y_proba_base, Y_proba_final, model_name):
 
 
-def save_results(modelName, path, y_test, predictions, test_accuracy, test_f1, *, configuration=None):
-    """Export full-precision metrics, predictions, confusion counts and run metadata.
+    plt.style.use('seaborn-v0_8-whitegrid')
+    plt.figure(figsize=(9, 7))
 
-    Supplied accuracy/F1 are checked against predictions to catch stale arguments.
-    Historical artifacts are preserved by choosing a new ``--output-dir``.
-    """
-    y_test, predictions = np.asarray(y_test), np.asarray(predictions)
-    actual_accuracy = accuracy_score(y_test, predictions)
-    actual_f1 = f1_score(y_test, predictions, average="macro", zero_division=0)
-    if not np.isclose(test_accuracy, actual_accuracy) or not np.isclose(test_f1, actual_f1):
-        raise ValueError("Supplied metrics disagree with the predictions.")
-    results_dir = project_path(path)
-    results_dir.mkdir(parents=True, exist_ok=True)
+    prec_base, rec_base, _ = precision_recall_curve(Y_test.ravel(), Y_proba_base.ravel())
+    ap_base = average_precision_score(Y_test, Y_proba_base, average="micro")
+    plt.plot(rec_base, prec_base, color="#3498db", linestyle="--", linewidth=2,
+             label=f'Base model (AP = {ap_base:.3f})')
 
-    try:
-        labels = list(np.unique(np.concatenate([y_test, predictions])))
-        scores = classification_report(y_test, predictions, labels=labels, zero_division=0, output_dict=True)
-        metrics = pd.DataFrame(
-            [{"model": modelName, "test_accuracy": actual_accuracy, "test_f1_macro": actual_f1,
-              "test_precision_macro": scores["macro avg"]["precision"],
-              "test_recall_macro": scores["macro avg"]["recall"], "n_test": len(y_test)}]
-        )
-        metrics.to_csv(results_dir / "metrics.csv", index=False)
+    prec_final, rec_final, _ = precision_recall_curve(Y_test.ravel(), Y_proba_final.ravel())
+    ap_final = average_precision_score(Y_test, Y_proba_final, average="micro")
+    plt.plot(rec_final, prec_final, color="#e74c3c", linewidth=3,
+             label=f'Final model with pseudo labels (AP = {ap_final:.3f})')
 
-        report = classification_report(y_test, predictions, labels=labels, zero_division=0)
-        (results_dir / "classification_report.txt").write_text(report, encoding="utf-8")
-        (results_dir / "classification_report.json").write_text(json.dumps(scores, indent=2), encoding="utf-8")
-        pd.DataFrame({"label": y_test, "prediction": predictions}).to_csv(
-            results_dir / "predictions_test.csv", index=False
-        )
-        config = configuration or {}
-        sources = {}
-        for source in config.get("input_files", []):
-            source_path = project_path(source)
-            sources[str(source)] = hashlib.sha256(source_path.read_bytes()).hexdigest()
-        run = {"configuration": config, "input_sha256": sources, "python": platform.python_version(),
-               "packages": {name: version(name) for name in ("numpy", "pandas", "scikit-learn")}}
-        (results_dir / "run.json").write_text(json.dumps(run, indent=2), encoding="utf-8")
+    baseline_interpolated = np.interp(rec_final[::-1], rec_base[::-1], prec_base[::-1])[::-1]
+    plt.fill_between(rec_final, baseline_interpolated, prec_final, where=(prec_final > baseline_interpolated),
+                     color='#2ecc71', alpha=0.2, label='Performance gain')
 
-        matrix = confusion_matrix(y_test, predictions, labels=labels)
-        pd.DataFrame(matrix, index=labels, columns=labels).to_csv(
-            results_dir / "confusion_matrix.csv"
-        )
-    except PermissionError as error:
-        raise PermissionError(
-            f"Cannot write results to {results_dir}. Close any open result files "
-            "or choose another directory with --output-dir."
-        ) from error
+    plt.title(f"Pseudo labeling impact using {model_name}", fontsize=15, fontweight='bold')
+    plt.xlabel("Recall", fontsize=12)
+    plt.ylabel("Precision", fontsize=12)
+    plt.xlim([0.0, 1.05])
+    plt.ylim([0.0, 1.05])
+    plt.legend(loc="lower left", fontsize=11, frameon=True, shadow=True)
+
+    plt.tight_layout()
+    _save_figure(f"ressource/results/ml_classic/conclusion_comparison_pr_{model_name}.png", dpi=300)
+    plt.show()
+
+def plot_model_comparison(score_logreg, score_svm):
+
+    plt.style.use('seaborn-v0_8-whitegrid')
+    fig, ax = plt.subplots(figsize=(6, 5))
+
+    modeles = ['Logistic\nRegression', 'RBF\nSVM']
+    scores = [score_logreg, score_svm]
+
+    couleurs = ['#3498db', '#e67e22']
+
+    barres = ax.bar(modeles, scores, color=couleurs, width=0.5)
+
+    for barre in barres:
+        hauteur = barre.get_height()
+        ax.annotate(f'{hauteur:.3f}',
+                    xy=(barre.get_x() + barre.get_width() / 2, hauteur),
+                    xytext=(0, 5),
+                    textcoords="offset points",
+                    ha='center', va='bottom', fontsize=12, fontweight='bold')
+
+    plt.title("Comparison between logreg and rbf_svm on the validation set)", fontsize=14, pad=15)
+    plt.ylabel("F1-Score", fontsize=12)
+
+    plt.ylim(0, max(scores) + 0.1)
+
+    plt.tight_layout()
+    _save_figure("ressource/results/ml_classic/comparison_rbf_log.png", dpi=300)
+    plt.show()

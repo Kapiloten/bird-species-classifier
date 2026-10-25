@@ -21,7 +21,7 @@ from project_paths import FEATURES_DIR, PROJECT_ROOT, project_path
 
 
 DEFAULT_OUTPUT_CSV = FEATURES_DIR / "all_5s_features.csv"
-DEFAULT_SOUNDSCAPE_LABELS_CSV = "train_soundscapes_labels.csv"
+DEFAULT_SOUNDSCAPE_LABELS_CSV = "ressource/raw_data/train_soundscapes_labels.csv"
 
 SAMPLE_RATE = 32000
 WINDOW_SECONDS = 5

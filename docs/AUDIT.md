@@ -1,5 +1,9 @@
 # Repository audit
 
+This records the initial audit of the historical single-label checkout.
+For subsequent integration with the current multi-label `main` workflow, moved
+metadata and upstream artifact cleanup, see [INTEGRATION.md](INTEGRATION.md).
+
 Inspection date: 2026-10-25. Base commit: `42143d3b`.
 Working branch: `codex/portfolio-audit`.
 

@@ -11,7 +11,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.pipeline import make_pipeline
 from project_paths import FEATURES_DIR, project_path
-from utils import load_data2, save_results
+from single_label import load_data2, save_results
 
 
 DEFAULT_OUTPUT_DIR = project_path("results/runs/manual/random_forest")

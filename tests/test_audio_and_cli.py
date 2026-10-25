@@ -35,7 +35,13 @@ def test_synthetic_audio_produces_finite_acoustic_and_mfcc_features(tmp_path):
     "manual_embedding/extract_all_5s_features.py",
     "manual_embedding/extract_soundscape_window_features.py",
     "perch_embedding/embedding_perch.py",
+    "perch_embedding/extract_recording_embeddings.py",
+    "perch_embedding/train_single_label.py",
     "perch_embedding/main.py",
+    "perch_embedding/train_val_test.py",
+    "manual_embedding/main.py",
+    "manual_embedding/train_val_test_score.py",
+    "manual_embedding/aa.py",
     "summarize_results.py",
 ])
 def test_cli_help_works_outside_repository_without_datasets(script, tmp_path):

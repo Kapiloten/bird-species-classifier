@@ -17,7 +17,7 @@ Recordings vary in duration, background noise and acoustic content, and may cont
 secondary species. The goal is to study the effect of audio representation and
 classifier choice while keeping the downstream models understandable.
 
-Two experiment families are preserved:
+Two historical single-label experiment families are preserved:
 
 - **Manual features:** six well-represented bird species, 51 features per recording,
   and a fixed recording-level 65/15/20 train/validation/test manifest.
@@ -25,15 +25,18 @@ Two experiment families are preserved:
   available training folders, followed by logistic regression, random forest,
   SVM and soft voting. Historical results include non-bird taxa.
 
-The repository also contains exploratory five-second feature exporters for training
-audio and multi-label soundscapes. These are not an evaluated multi-label detector
-or a complete BirdCLEF competition submission.
+The current workflow inherited from `main` additionally supports **multi-label
+classification of five-second windows**, recording-group splits, hyperparameter
+search and Perch pseudo-labeling. Its implementation and figures are retained.
+The numeric tables below concern the historical single-label experiments only;
+no multi-label score or competition submission score is inferred from plot images.
 
 ## Data actually used
 
 Source: [BirdCLEF+ 2026 on Kaggle](https://www.kaggle.com/competitions/birdclef-2026).
 Counts below come from the repository's metadata and saved split, not an assumed
 competition-wide training protocol.
+Source metadata now lives under `ressource/raw_data/`.
 
 | Asset | Verified content and use |
 | --- | --- |
@@ -42,7 +45,7 @@ competition-wide training protocol.
 | `classes.txt`, `selected_classes.csv` | The six most represented bird classes selected in `analyse_dataset.ipynb` |
 | `splits/audio_split_65_15_20.csv` | 2,982 recordings: 1,938 training, 448 validation and 596 test |
 | `ressource/features/features.csv`, `mfcc_features.csv` | Committed whole-recording feature tables for that exact six-class manifest |
-| `train_soundscapes_labels.csv` | 1,478 annotated rows across 66 soundscape files; used by exploratory window exporters, not by the reported classifiers |
+| `train_soundscapes_labels.csv` | 1,478 annotated rows across 66 soundscape files; used by the current multi-label window workflow, not by the archived single-label scores |
 | `sample_submission.csv`, `test_soundscapes/readme.txt` | Target vocabulary/template and hidden-test placeholder; no labeled hidden-test evaluation is available |
 
 | Label | Bird species | Recordings | Train / validation / test |
@@ -83,10 +86,18 @@ flowchart TD
     J --> P
     O --> P
     P --> Q[Metrics, predictions, confusion counts and run metadata]
+    A --> R[Current workflow: five-second windows and multi-hot targets]
+    R --> S[Group train / validation / test by original recording]
+    S --> T[Manual RF / Nystroem or Perch one-vs-rest logistic regression]
+    T --> U[Multi-label F1 and precision-recall analysis]
+    S --> V[Unannotated pool excluding held-out recording groups]
+    V --> W[Perch pseudo-labeling at confidence 0.90]
+    W --> U
 ```
 
-The diagram describes the current executable workflow. **Archived Perch scores
-were produced before the train-only augmentation correction.**
+The diagram separates the reproducible historical baselines from the current
+multi-label workflow. **Archived Perch scores were produced before the train-only
+augmentation correction.**
 
 ### Manual representation
 
@@ -113,7 +124,7 @@ Balanced class weights retain the existing configuration; their benefit has not
 been established by an ablation. Validation scores are reported separately from
 test scores; no systematic hyperparameter search is implemented.
 
-### Pretrained representation
+### Historical pretrained representation
 
 The extractor loads [Google's bird vocalization classifier, version 8](https://www.kaggle.com/models/google/bird-vocalization-classifier/TensorFlow2/bird-vocalization-classifier/8)
 via TensorFlow Hub. Each recording is divided into non-overlapping 160,000-sample
@@ -131,6 +142,34 @@ two other voting runs. Individual-model/LightGBM experiments remain in commented
 historical code; LightGBM is not an active dependency or runnable CLI option.
 Complete configurations of voting variants 2/3 are unavailable. The current code
 does not establish a controlled search over these variants.
+
+### Current multi-label window workflow
+
+`scripts/utils.py` aligns soundscape annotations and primary recording labels to
+the official target vocabulary. `GroupShuffleSplit` keeps original recordings in
+one outer partition (seed 15). Group fractions are approximately 65/15/20; window
+counts need not follow those fractions. Unannotated windows from validation/test
+recordings are excluded from the pseudo-label pool.
+
+- `scripts/manual_embedding/main.py` preserves the random-forest and
+  Nystroem/RBF-plus-logistic grid searches with a predefined validation partition.
+  A standalone logistic baseline is configured but not enabled in its model loop.
+- `scripts/perch_embedding/embedding_perch.py` saves **one embedding per window**,
+  aligned row identifiers and primary labels for training audio.
+- `scripts/perch_embedding/main.py` preserves one-vs-rest logistic regression,
+  the existing three-fold search over `C`, final training on train + validation,
+  and pseudo-labeling at confidence 0.90. Its final `C=0.001` remains explicitly
+  fixed in the original workflow rather than selected from the search object.
+- Precision-recall, per-class F1 and UMAP plotting utilities remain available;
+  plotting extras are installed separately. No KNN result is claimed: that trial
+  remains commented out.
+
+These workflows were not retrained during integration. Current `main` supplied
+figures, but its numeric scores/predictions and heavy input arrays were not
+committed. Run the commands in the reproduction guide to obtain new scores.
+The Perch inner cross-validation remains window-based, so neighboring windows can
+share a fold boundary; group-aware inner CV and separate threshold selection remain
+needed before treating its model selection as independent.
 
 ## Archived experimental results
 
@@ -215,7 +254,7 @@ uv run --locked python scripts/manual_embedding/train_random_forest.py
 uv run --locked python scripts/manual_embedding/train_svm_rbf.py
 ```
 
-New runs default to ignored `results/runs/manual/<model>/`, preserving archived
+These historical baseline runs default to ignored `results/runs/manual/<model>/`, preserving archived
 results. `--features-dir` selects another feature directory; `--output-dir` selects
 a run directory. Exports include predictions, accuracy/precision/recall/F1,
 confusion counts, classification reports and configuration/input hashes.
@@ -246,16 +285,19 @@ analyse_dataset.ipynb            # Bird taxonomy exploration and six-class selec
 features_calssique.ipynb         # Historical manual feature exploration
 scripts/
   project_paths.py               # Paths resolved from the repository root
-  utils.py                       # Validated loaders, splitting and result exports
+  utils.py                       # Current multi-label loaders and plotting
+  multilabel_data.py             # Target alignment and recording-group separation
+  single_label.py                # Historical loaders and result exports
   manual_embedding/              # Split, whole-recording/window extraction, training
-  perch_embedding/               # Frozen inference and soft-voting classifier
+  perch_embedding/               # Current window workflow + distinct historical CLIs
   evaluation.py                  # Exact metrics and duplicate diagnostics
   summarize_results.py           # Rebuild small portfolio artifacts
 splits/                         # Versioned manual recording manifest
 ressource/
   features/                     # Committed compact six-class feature tables
   results/ml_classic/            # Preserved historical experiment artifacts
-  processed_data/               # Ignored local embeddings
+  raw_data/                     # Source metadata; local audio is ignored
+  processed_data*/              # Ignored recording/window embeddings
 results/                        # Derived tables, figures and provenance
 docs/                           # Audit, reproduction guide, validation and GitHub proposals
 tests/                          # Synthetic dataset-free regression tests
@@ -275,6 +317,10 @@ kept to preserve references and Git history.
 - **Controlled comparison:** run both representations on the same bird-only
   classes and untouched split; choose hyperparameters/voting weights using
   validation only. Add repeated/grouped evaluations and uncertainty estimates.
+- **Current multi-label selection:** use group-aware inner CV for Perch and record
+  machine-readable results, selected parameters and thresholds. The pseudo-label
+  tradeoff plots use test labels for post-hoc analysis, so they must not become
+  threshold-selection evidence for claims on that same test set.
 - **Pretraining overlap:** Perch is externally pretrained; overlap with evaluation
   recording sources has not been audited.
 - **Temporal and multi-label modeling:** evaluate frame-level predictions and

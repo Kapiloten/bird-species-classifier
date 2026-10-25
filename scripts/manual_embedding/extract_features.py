@@ -18,7 +18,6 @@ OUTPUT_CSV = FEATURES_DIR / "features.csv"
 
 SAMPLE_RATE = 32000
 
-# Mets une valeur comme 10 pour tester rapidement, ou None pour tout traiter.
 LIMIT = None
 
 

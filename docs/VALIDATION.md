@@ -1,5 +1,29 @@
 # Validation performed
 
+## Integration with main (Pull Request #1)
+
+After merging the multi-label workflow from `main` at `0c1a794d`:
+
+- **46 tests passed** in 50.69 seconds, with the same three upstream audioread
+  deprecation warnings. This includes historical tests and CLI help plus current
+  CSV/Perch fixture loading, annotation alignment, recording groups, held-out
+  pseudo-label pool exclusion and different-length PR plotting.
+- Ruff passed for all scripts, tests and the root command guide. `uv lock --check
+  --offline` validated 185 resolved packages, including optional plotting extras.
+- The report generator validated all ten historical runs after the metadata move
+  to `ressource/raw_data/`; all numeric scores remain unchanged. SHA-256 provenance
+  paths were regenerated for this layout.
+- The 17 command-help cases run from outside the repository, including current
+  multi-label entry points, without datasets, serialized models or Perch weights.
+- No large multi-label experiment, optional model inference or new score claim
+  was added. Existing model/search settings were preserved; protocol/plot fixes
+  are described in [INTEGRATION.md](INTEGRATION.md).
+
+The initial validation record below remains historical: its no-commit/no-push
+statement describes the first audit delivery, before the user's commit and PR.
+
+## Initial audit validation
+
 Date: 2026-10-25. Local environment: Windows, CPython 3.11.14, uv 0.9.27.
 Core packages: NumPy 2.4.4, pandas 3.0.3, scikit-learn 1.8.0,
 librosa 0.11.0 and Matplotlib 3.10.9. Development tools resolved in the lock:

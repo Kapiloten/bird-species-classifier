@@ -15,9 +15,9 @@ if str(SCRIPTS_DIR) not in sys.path:
 from project_paths import FEATURES_DIR, project_path
 
 
-DEFAULT_LABELS_CSV = "train_soundscapes_labels.csv"
+DEFAULT_LABELS_CSV = "ressource/raw_data/train_soundscapes_labels.csv"
 DEFAULT_AUDIO_DIR = "train_soundscapes"
-DEFAULT_SAMPLE_SUBMISSION = "sample_submission.csv"
+DEFAULT_SAMPLE_SUBMISSION = "ressource/raw_data/sample_submission.csv"
 DEFAULT_OUTPUT_CSV = FEATURES_DIR / "soundscape_5s_features.csv"
 
 SAMPLE_RATE = 32000

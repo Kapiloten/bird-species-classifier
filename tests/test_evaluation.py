@@ -6,7 +6,7 @@ import pytest
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 
 from scripts.evaluation import duplicate_feature_rows, metrics_from_confusion
-from scripts.utils import save_results
+from scripts.single_label import save_results
 
 
 def test_confusion_metrics_match_sklearn_with_unpredicted_and_unsupported_classes():

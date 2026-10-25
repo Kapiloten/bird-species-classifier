@@ -43,6 +43,11 @@ results/matplotlib_cache*/
 
 # Generated embeddings
 ressource/processed_data/
+ressource/processed_data*/
+ressource/raw_data/train_audio/
+ressource/raw_data/train_soundscapes/
+ressource/raw_data/test_soundscapes/
+ressource/results/benchmark_mfcc/
 
 # Generated feature exports
 ressource/features/all_5s_features*.csv

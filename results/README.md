@@ -44,3 +44,9 @@ under `ressource/results/` are read only. New training commands write to ignored
 The corrected Perch protocol and a duplicate-aware manual benchmark both need new
 experiments. No corrected Perch score is reported. See [the audit](../docs/AUDIT.md)
 and [reproduction guide](../docs/REPRODUCIBILITY.md).
+
+The current multi-label workflow from `main` is preserved separately. Its PNGs
+remain under `ressource/results/ml_classic/`; they are not substituted for numeric
+prediction/count artifacts in this report. Source metadata moved to
+`ressource/raw_data/`; input fingerprints reflect the merged layout. Serialized
+models removed upstream remain accessible in Git history rather than being restored.

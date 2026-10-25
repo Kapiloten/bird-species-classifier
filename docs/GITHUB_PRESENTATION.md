@@ -44,8 +44,10 @@ checks. Keep the pre-existing `rapport/` as historical analysis, with the audit'
 evaluation caveats. Moving `ressource/` or renaming notebooks can be a separate
 small migration if desired; it is unnecessary for this audit.
 
-The existing tracked ~29 MB random-forest artifact is retained. Future model and
-embedding exports are ignored. Do not redistribute raw audio, model weights or
+Upstream `main` removed serialized models; that cleanup is retained. Older trained
+artifacts remain recoverable from Git history, and compact metric/prediction tables
+are retained for report reproduction. Future model and embedding exports are
+ignored. Do not redistribute raw audio, model weights or
 third-party metadata without checking their applicable terms. Choose a source-code
 license deliberately before advertising the project as open source; this audit
 does not assume ownership or add a license on the author's behalf.

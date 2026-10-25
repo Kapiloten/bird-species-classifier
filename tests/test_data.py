@@ -6,7 +6,7 @@ import pytest
 
 from scripts.manual_embedding.create_audio_split import assign_splits
 from scripts.project_paths import PROJECT_ROOT, first_existing_path, project_path
-from scripts.utils import increase_rare_birds, load_data2, merge_manual_features, split_embeddings
+from scripts.single_label import increase_rare_birds, load_data2, merge_manual_features, split_embeddings
 
 
 @pytest.fixture

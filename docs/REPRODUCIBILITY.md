@@ -78,8 +78,8 @@ if needed. GPU inference is not required by the script.
 
 ```bash
 uv sync --locked --extra perch
-uv run --locked --extra perch python scripts/perch_embedding/embedding_perch.py --audio-dir train_audio --output-dir ressource/processed_data
-uv run --locked python scripts/perch_embedding/main.py --embeddings-dir ressource/processed_data --seed 12 --min-originals 5 --output-dir results/runs/perch_corrected
+uv run --locked --extra perch python scripts/perch_embedding/extract_recording_embeddings.py --audio-dir train_audio --output-dir ressource/processed_data
+uv run --locked python scripts/perch_embedding/train_single_label.py --embeddings-dir ressource/processed_data --seed 12 --min-originals 5 --output-dir results/runs/perch_corrected
 ```
 
 The extractor downloads the versioned model referenced by `MODEL_URL`. It saves
@@ -106,7 +106,54 @@ Perch table. New corrected scores must be reported separately. Sorted input orde
 and seeds aid repeatability, but do not guarantee bitwise equivalence across
 platforms or eliminate duplicate/source/pretraining overlap.
 
-## 5. Exploratory window exports
+## 5. Current multi-label workflow from main
+
+This is distinct from the historical whole-recording baselines above. Metadata is
+under `ressource/raw_data/`. The imported source workflow and figures are preserved;
+its full datasets/embeddings are local, and no new numeric score is claimed.
+
+To create the manual window table using audio in the upstream raw-data layout:
+
+```bash
+uv run --locked python scripts/manual_embedding/extract_all_5s_features.py --train-audio-dir ressource/raw_data/train_audio --train-soundscapes-dir ressource/raw_data/train_soundscapes
+uv sync --locked --extra plots
+uv run --locked --extra plots python scripts/manual_embedding/main.py --features-csv ressource/features/all_5s_features.csv --output-dir ressource/results/benchmark_mfcc
+```
+
+If audio is instead in root-level `train_audio/` and `train_soundscapes/`, use those
+paths in the extraction command. `scripts/utils.py` accepts either layout in CSV
+recording paths. This window table is not interchangeable with the 51-feature
+whole-recording baseline. The manual grid search writes `scores_en_direct.json`,
+models and test predictions/probabilities into the chosen output directory.
+
+For per-window Perch embeddings and multi-label training:
+
+```bash
+uv sync --locked --extra perch --extra plots
+uv run --locked --extra perch python scripts/perch_embedding/embedding_perch.py --sources train_audio train_soundscapes --output-dir ressource/processed_data4
+uv run --locked --extra plots python scripts/perch_embedding/main.py --embeddings-dir ressource/processed_data4 --output-dir ressource/results
+```
+
+Extraction searches the raw-data layout first, then root-level audio folders.
+Both sources are needed by the current multi-label loader. It writes separate
+`X_embeddings_perch_<source>.npy` and `row_ids_<source>.npy` files; training audio
+also has `y_labels_train_audio.npy`. Unlike historical extraction, embeddings are
+not averaged over the recording. Each row is a five-second window. Failed
+recordings and extraction parameters are exported per source.
+
+Current multi-label loaders retain the seed-15 outer recording-group split.
+Pseudo-label candidates exclude all validation/test recording groups, including
+unannotated windows of held-out soundscapes. Synthetic tests verify both CSV and
+Perch-array loaders with small fixtures. The Perch inner three-fold search remains
+window-based, and the final model's `C` remains fixed at 0.001; these limitations
+are documented rather than silently changing the upstream learning algorithms.
+
+Numeric Perch multi-label F1 is printed by the training script and can be captured
+in a local log. Train/validation/test inspection scripts accept `--help` and a
+model directory via `--output-dir`. No inference or training begins on import.
+UMAP/seaborn dependencies are optional `plots` extras.
+
+## 6. Additional window exporter
 
 ```bash
 uv run --locked python scripts/manual_embedding/extract_all_5s_features.py --help
@@ -116,11 +163,11 @@ uv run --locked python scripts/manual_embedding/extract_soundscape_window_featur
 These pre-existing utilities are preserved. The all-window script uses its own
 FFT/log-mel/DCT implementation; its values are not interchangeable with the
 whole-recording librosa baseline. The soundscape utility exports multi-hot targets
-from the supplied annotations. Neither output feeds the reported classifier
-scores. If using windows for experiments, split/group by original recording before
+from the supplied annotations. Neither output feeds the historical single-label
+scores. The all-window table feeds the current multi-label workflow. Split/group by original recording before
 windowing; adjacent windows must not cross training and test.
 
-## 6. Local checks and CI
+## 7. Local checks and CI
 
 ```bash
 uv run --locked ruff check scripts tests main.py
